@@ -1,0 +1,111 @@
+/* Estilos para el modo oscuro */
+body.dark-mode {
+    background-color: #121212;
+    color: #e0e0e0;
+}
+
+/* Estilos para la cola de procesamiento en modo oscuro */
+.dark-mode .queue-item {
+    background-color: #1e1e1e;
+    border-left: 4px solid #333;
+}
+
+.dark-mode .sidebar {
+    background-color: #1e1e1e;
+    border-right: 1px solid #333;
+}
+
+.dark-mode .sidebar-header {
+    border-bottom: 1px solid #333;
+}
+
+.dark-mode .chat-item {
+    border-bottom: 1px solid #333;
+}
+
+.dark-mode .chat-item:hover {
+    background-color: #2a2a2a;
+}
+
+.dark-mode .chat-item.active {
+    background-color: #333;
+}
+
+.dark-mode .chat-messages {
+    background-color: #121212;
+}
+
+.dark-mode .user-message {
+    background-color: #0b5394;
+    color: #ffffff;
+}
+
+.dark-mode .assistant-message {
+    background-color: #333;
+    color: #e0e0e0;
+}
+
+.dark-mode .chat-input-container,
+.dark-mode .file-upload-area {
+    background-color: #1e1e1e;
+    border-top: 1px solid #333;
+}
+
+.dark-mode #chat-input {
+    background-color: #333;
+    color: #e0e0e0;
+    border: 1px solid #444;
+}
+
+.dark-mode .file-upload-label {
+    background-color: #333;
+    border: 1px solid #444;
+    color: #e0e0e0;
+}
+
+.dark-mode .file-upload-label:hover {
+    background-color: #444;
+}
+
+.dark-mode .welcome-message h1 {
+    color: #4da6ff;
+}
+
+.dark-mode .theme-toggle {
+    color: #e0e0e0;
+}
+
+.dark-mode code, .dark-mode pre {
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+}
+
+/* Estilos para los elementos de la cola en modo oscuro */
+.dark-mode .queue-item-logs {
+    background-color: #2a2a2a;
+    color: #e0e0e0;
+}
+
+.dark-mode .toggle-logs-btn {
+    color: #4da6ff;
+}
+
+.dark-mode .queue-item-pending .queue-item-status {
+    background-color: #0d47a1;
+    color: #e0e0e0;
+}
+
+.dark-mode .queue-item-processing .queue-item-status {
+    background-color: #e65100;
+    color: #e0e0e0;
+}
+
+.dark-mode .queue-item-completed .queue-item-status {
+    background-color: #1b5e20;
+    color: #e0e0e0;
+}
+
+.dark-mode .queue-item-error .queue-item-status {
+    background-color: #b71c1c;
+    color: #e0e0e0;
+}

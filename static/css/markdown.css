@@ -1,0 +1,125 @@
+/* Estilos para elementos de Markdown */
+
+/* Código en línea */
+code {
+    background-color: #f0f0f0;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.9em;
+    border: 1px solid #ddd;
+}
+
+/* Bloques de código */
+pre {
+    background-color: #f5f5f5;
+    padding: 10px;
+    border-radius: 5px;
+    overflow-x: auto;
+    margin: 10px 0;
+    border: 1px solid #ddd;
+}
+
+pre code {
+    background-color: transparent;
+    padding: 0;
+    border: none;
+    display: block;
+    line-height: 1.5;
+}
+
+/* Encabezados */
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+h1 { font-size: 2em; }
+h2 { font-size: 1.5em; }
+h3 { font-size: 1.25em; }
+h4 { font-size: 1em; }
+
+/* Listas */
+ul, ol {
+    padding-left: 20px;
+    margin: 10px 0;
+}
+
+li {
+    margin: 5px 0;
+}
+
+/* Citas */
+blockquote {
+    border-left: 4px solid #ddd;
+    padding-left: 15px;
+    margin: 10px 0;
+    color: #666;
+}
+
+/* Enlaces */
+a {
+    color: #0078d4;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Imágenes */
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Tablas */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0;
+}
+
+table, th, td {
+    border: 1px solid #ddd;
+}
+
+th, td {
+    padding: 8px 12px;
+    text-align: left;
+}
+
+th {
+    background-color: #f0f0f0;
+}
+
+/* Modo oscuro */
+body.dark-mode code {
+    background-color: #2a2a2a;
+    border-color: #444;
+    color: #e0e0e0;
+}
+
+body.dark-mode pre {
+    background-color: #2a2a2a;
+    border-color: #444;
+}
+
+body.dark-mode blockquote {
+    border-left-color: #444;
+    color: #aaa;
+}
+
+body.dark-mode a {
+    color: #4da6ff;
+}
+
+body.dark-mode th {
+    background-color: #333;
+}
+
+body.dark-mode table, body.dark-mode th, body.dark-mode td {
+    border-color: #444;
+}

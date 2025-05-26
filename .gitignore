@@ -1,0 +1,59 @@
+# Entorno virtual
+venv/
+env/
+.venv/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+
+# Archivos de configuración del entorno
+.Python
+*.env
+
+# Configuración de IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos de logs
+*.log
+
+# Archivos de bases de datos
+*.sqlite3
+*.db
+
+# Archivos generados por pytest
+.coverage
+.cache/
+htmlcov/
+
+# Distribución y empaquetado
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Archivos de cobertura
+*.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Archivos de test
+.tox/
+nox/
+
+# Otros
+.DS_Store
+Thumbs.db
+
+# Datos de prueba
+data/
+vector_db/
+uploads/

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat con Mar-IA-Jose</title>    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dark-mode.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/files-panel.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/markdown.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/upload-queue.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/queue-panel.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/math.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- MathJax para renderizar LaTeX -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['\\(', '\\)']],
+                displayMath: [['\\[', '\\]']],
+                processEscapes: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+                ignoreHtmlClass: 'tex2jax_ignore',
+                processHtmlClass: 'tex2jax_process'
+            }
+        };
+    </script>
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="user-header">
+                <span class="username">{{ current_user.username}}</span>
+                <button id="theme-toggle" class="theme-toggle">🌙</button>
+                <a href="{{ url_for('logout') }}" class="logout-btn" title="Cerrar sesión"><i class="fas fa-sign-out-alt"></i></a>
+            </div>
+            <div class="sidebar-header">
+                <h2>Mis Conversaciones</h2>
+                <div class="sidebar-actions">
+                    <button id="new-chat-btn" class="new-chat-btn">Nueva Conversación</button>
+                </div>
+            </div>
+            <div class="chat-list">
+                {% for chat in chats %}
+                <div class="chat-item" data-id="{{ chat.id }}">
+                    <div class="chat-content">
+                        <div class="chat-preview">{{ chat.preview }}</div>
+                        <div class="chat-date">{{ chat.timestamp }}</div>
+                    </div>
+                    <div class="chat-actions">
+                        <button class="chat-action-btn rename-chat" title="Renombrar chat">✏️</button>
+                        <button class="chat-action-btn delete-chat" title="Eliminar chat">🗑️</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="main-content">
+            <div class="chat-container">                <div class="chat-messages" id="chat-messages">
+                    <!-- El mensaje de bienvenida ahora se maneja dinámicamente desde JavaScript -->
+                </div>
+                <div class="chat-input-container">
+                    <textarea id="chat-input" placeholder="Escribe tu mensaje aquí..."></textarea>
+                    <button id="send-btn">Enviar</button>
+                </div>
+                <div class="bottom-toolbar">
+                    <div class="file-upload-container">
+                        <label for="file-upload" class="file-upload-label">
+                            <span class="upload-icon">📎</span>
+                            <span>Subir archivo</span>
+                        </label>
+                        <input type="file" id="file-upload" class="file-upload-input" accept=".pdf,.txt,.md,.csv,.docx,.jpg,.jpeg,.png,.gif" multiple>
+                    </div>
+                    <button id="camera-btn" class="toolbar-btn">
+                        <span class="camera-icon">📷</span>
+                        <span>Cámara</span>
+                    </button>
+                    <div id="upload-status" class="upload-status"></div>
+                    <button id="files-toggle-toolbar" class="toolbar-btn">📁 Ver archivos</button>
+                    <button id="queue-toggle-toolbar" class="toolbar-btn">🔄 Ver cola</button>
+                    <div class="model-selection-group">
+                        <label for="model-select">Modelo:</label>
+                        <select id="model-select" class="model-select">
+                            <!-- Los modelos se cargarán dinámicamente -->
+                        </select>
+                        <button id="system-message-btn" class="system-message-btn">⚙️ Mensaje del Sistema</button>
+                    </div>
+                    <div class="version-info">v. <span id="app-version">0.5.0</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Panel de archivos desplegable -->
+    <div class="files-panel" id="files-panel">
+        <div class="files-panel-header">
+            <h3 class="files-panel-title">Archivos Subidos</h3>
+            <button class="files-panel-close" id="files-panel-close">×</button>
+        </div>
+        <div class="files-list" id="files-list">
+            <!-- Los archivos se cargarán dinámicamente -->
+        </div>
+    </div>
+    
+    <!-- Panel de cola de procesamiento -->
+    <div class="queue-panel" id="queue-panel">
+        <div class="queue-panel-header">
+            <h3 class="queue-panel-title">Cola de Procesamiento</h3>
+            <button class="queue-panel-close" id="queue-panel-close">×</button>
+        </div>
+        <div class="queue-list" id="queue-list">
+            <!-- La cola de procesamiento se cargará dinámicamente -->
+        </div>
+    </div>
+    
+    <!-- Modal para configurar mensaje del sistema -->
+    <div class="modal" id="system-message-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Configurar Mensaje del Sistema</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Personaliza el mensaje del sistema para este chat:</p>
+                <textarea id="system-message-input" placeholder="Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="save-system-message-btn" class="primary-btn">Guardar</button>
+                <button class="cancel-btn modal-close">Cancelar</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal para renombrar chat -->
+    <div class="modal" id="rename-chat-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Renombrar Chat</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Introduce un nuevo nombre para este chat:</p>
+                <input type="text" id="chat-title-input" placeholder="Nombre del chat">
+            </div>
+            <div class="modal-footer">
+                <button id="save-chat-title-btn" class="primary-btn">Guardar</button>
+                <button class="cancel-btn modal-close">Cancelar</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal para opciones de procesamiento de PDF -->
+    <div class="modal" id="pdf-options-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Opciones de Procesamiento de PDF</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Selecciona cómo quieres procesar este archivo PDF:</p>
+                <div class="pdf-options">
+                    <div class="option">
+                        <input type="radio" id="process-with-ocr" name="pdf-process-option" value="true" checked>
+                        <label for="process-with-ocr">Procesar texto y realizar OCR en imágenes</label>
+                        <p class="option-description">Extrae el texto del PDF y también analiza las imágenes para extraer su contenido textual.</p>
+                    </div>
+                    <div class="option">
+                        <input type="radio" id="process-text-only" name="pdf-process-option" value="false">
+                        <label for="process-text-only">Procesar solo el texto del PDF</label>
+                        <p class="option-description">Extrae solo el texto del PDF, ignorando el contenido de las imágenes.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="process-pdf-btn" class="primary-btn">Procesar</button>
+                <button class="cancel-btn modal-close">Cancelar</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

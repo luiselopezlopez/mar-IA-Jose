@@ -1,0 +1,35 @@
+/* Estilos para fórmulas matemáticas */
+.message .MathJax {
+    font-size: 1.1em;
+    margin: 8px 0;
+}
+
+/* Estilos para modo claro */
+body:not(.dark-mode) .message .MathJax {
+    color: #333;
+}
+
+/* Estilos para modo oscuro */
+body.dark-mode .message .MathJax {
+    color: #f0f0f0;
+}
+
+/* Estilos para bloques de fórmulas */
+.math-block {
+    margin: 15px 0;
+    overflow-x: auto;
+    max-width: 100%;
+}
+
+/* Estilo para bloques LaTeX con scroll horizontal si son muy anchos */
+.mjx-chtml {
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+}
+
+/* Ajustar el espacio vertical entre las fórmulas y el texto */
+.mjx-chtml.MJXc-display {
+    margin: 1em 0 !important;
+    padding: 0.5em 0;
+}

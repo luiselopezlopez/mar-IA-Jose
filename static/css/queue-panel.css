@@ -1,0 +1,69 @@
+/* Estilos para el panel de cola de procesamiento */
+.queue-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 350px;
+    height: 100vh;
+    background-color: #f0f0f0;
+    border-left: 1px solid #ddd;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+.queue-panel.open {
+    transform: translateX(0);
+}
+
+.queue-panel-header {
+    padding: 15px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.queue-panel-title {
+    margin: 0;
+    font-size: 18px;
+}
+
+.queue-panel-close {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+.queue-list {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 15px;
+}
+
+/* Estilos para modo oscuro */
+body.dark-mode .queue-panel {
+    background-color: #1e1e1e;
+    border-left: 1px solid #333;
+}
+
+body.dark-mode .queue-panel-header {
+    border-bottom: 1px solid #333;
+}
+
+body.dark-mode .queue-panel-close {
+    color: #e0e0e0;
+}
+
+/* Posicionamiento cuando ambos paneles están abiertos */
+.files-panel.open + .queue-panel.open {
+    transform: translateX(-350px);
+}
+
+/* Botón para alternar el panel de cola */
+#queue-toggle-toolbar {
+    margin-left: 10px;
+}

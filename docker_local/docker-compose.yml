@@ -1,0 +1,22 @@
+services:
+  mariajose:
+    build: .
+    ports:
+      - "80:80"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./vector_db:/app/vector_db
+      - ./data:/app/data
+      - ./instance:/app/instance
+    environment:
+      - DATABASE_URL=sqlite:///mariajoseai.db
+      - FLASK_ENV=production
+      - DATABASE_URL=sqlite:///mariajoseai.db
+      - api_key=1ngB5JL78uwzx2hG5ZMAPixEhIHBfXCntNGydPnb4yuI3NDsnKvdJQQJ99BCACHYHv6XJ3w3AAAAACOG7BsL
+      - model_name=gpt-4o
+      - api_version=2025-01-01-preview
+      - azure_endpoint=https://luise-m7souxdp-eastus2.openai.azure.com
+      - embedding_endpoint= https://librechatluise4633087029.openai.azure.com
+      - embedding_deployment=text-embedding-ada-002
+      - embedding_api=2023-05-15
+      - embedding_api_key=6D93ytgxlMky6L6vOlX5XIvDNiCgptkQ5ceQ8No1z8oMZSPICAwQJQQJ99BCACYeBjFXJ3w3AAAAACOG4MQB

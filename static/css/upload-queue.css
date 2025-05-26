@@ -1,0 +1,118 @@
+/* Estilos para la cola de procesamiento de archivos */
+.upload-queue-container {
+    margin-bottom: 20px;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 15px;
+}
+
+.upload-queue-title {
+    font-size: 16px;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+.queue-item {
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+    border-left: 4px solid #ccc;
+}
+
+.queue-item-pending {
+    border-left-color: #0078d4;
+}
+
+.queue-item-processing {
+    border-left-color: #ff9800;
+    animation: pulse 1.5s infinite;
+}
+
+.queue-item-completed {
+    border-left-color: #4caf50;
+}
+
+.queue-item-error {
+    border-left-color: #f44336;
+}
+
+.queue-item-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.queue-item-name {
+    font-weight: bold;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+.queue-item-status {
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background-color: #eee;
+}
+
+.queue-item-pending .queue-item-status {
+    background-color: #e3f2fd;
+    color: #0078d4;
+}
+
+.queue-item-processing .queue-item-status {
+    background-color: #fff3e0;
+    color: #e65100;
+}
+
+.queue-item-completed .queue-item-status {
+    background-color: #e8f5e9;
+    color: #2e7d32;
+}
+
+.queue-item-error .queue-item-status {
+    background-color: #ffebee;
+    color: #c62828;
+}
+
+.toggle-logs-btn {
+    background: none;
+    border: none;
+    color: #0078d4;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 0;
+    text-decoration: underline;
+    margin-bottom: 5px;
+}
+
+.queue-item-logs {
+    background-color: #f0f0f0;
+    border-radius: 4px;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.log-entry {
+    margin-bottom: 4px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.8;
+    }
+    100% {
+        opacity: 1;
+    }
+}
