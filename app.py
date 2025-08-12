@@ -690,9 +690,22 @@ def chat():
         if text_content.strip():
             content.append({"type": "text", "text": text_content.strip()})
 
-        # Añadir cada imagen como un componente de tipo imagen
+        # Añadir cada imagen como un componente de tipo imagen, validando el formato base64
         for img_url in image_urls:
-            content.append({"type": "image_url", "image_url": {"url": img_url}})
+            # Verificar que la imagen tenga datos base64 válidos
+            if 'base64,' in img_url:
+                base64_parts = img_url.split('base64,')
+                if len(base64_parts) > 1 and base64_parts[1].strip():
+                    try:
+                        # Intentar decodificar para verificar que es base64 válido
+                        base64.b64decode(base64_parts[1])
+                        content.append({"type": "image_url", "image_url": {"url": img_url}})
+                    except Exception as e:
+                        logger.warning(f"Error al decodificar base64: {e}", "app.chat")
+                else:
+                    logger.warning("Formato de imagen incorrecto: datos base64 vacíos", "app.chat")
+            else:
+                logger.warning(f"Formato de imagen incorrecto: {img_url[:30]}...", "app.chat")
 
         # Añadir el mensaje multimodal al historial
         messages.append({"role": "user", "content": content})

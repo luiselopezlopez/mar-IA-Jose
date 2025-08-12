@@ -687,7 +687,47 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const reader = new FileReader();
         reader.onload = function(e) {
-            const imageData = e.target.result;
+            let imageData = e.target.result;
+            
+            // Verificar y corregir el formato de la imagen
+            if (imageData) {
+                // Asegurarse de que el formato base64 sea correcto
+                const imageType = file.type; // Por ejemplo: 'image/png', 'image/jpeg'
+                const correctPrefix = `data:${imageType};base64,`;
+                
+                // Si la imagen no tiene el formato correcto, corregirlo
+                if (!imageData.startsWith(correctPrefix)) {
+                    console.log('Corrigiendo formato de imagen:', imageData.substring(0, 30));
+                    // Extraer solo los datos base64 si ya tiene algún prefijo
+                    let base64Data = imageData;
+                    if (imageData.includes('base64,')) {
+                        base64Data = imageData.split('base64,')[1];
+                    } else if (imageData.includes(',')) {
+                        base64Data = imageData.split(',')[1];
+                    }
+                    
+                    // Reconstruir con el prefijo correcto
+                    imageData = `${correctPrefix}${base64Data}`;
+                }
+                
+                // Verificar que la imagen tenga datos base64 después del prefijo
+                if (imageData.endsWith('base64,') || imageData.split('base64,')[1] === '') {
+                    console.error('Error: Imagen sin datos base64 válidos');
+                    uploadStatus.textContent = 'Error: Formato de imagen inválido';
+                    return; // No adjuntar la imagen si no tiene datos base64
+                }
+                
+                // Verificar que los datos base64 sean válidos
+                try {
+                    const base64Part = imageData.split('base64,')[1];
+                    atob(base64Part); // Intenta decodificar para verificar que es base64 válido
+                } catch (error) {
+                    console.error('Error: Datos base64 inválidos', error);
+                    uploadStatus.textContent = 'Error: Datos de imagen inválidos';
+                    return; // No adjuntar la imagen si los datos base64 son inválidos
+                }
+            }
+            
             attachedImages.push(imageData);
 
             // Mostrar vista previa
