@@ -928,7 +928,13 @@ def get_chat(chat_id):
     session['file_hashes'] = chat_data.get('file_hashes', [])
     logger.debug(f"Cargando chat {chat_id} con {len(session['file_hashes'])} archivos asociados", "app.get_chat")
     
-    return jsonify(messages)
+    # Devolver datos completos del chat, no solo mensajes
+    return jsonify({
+        'messages': messages,
+        'system_message': chat_data.get('system_message'),
+        'title': chat_data.get('title'),
+        'file_hashes': chat_data.get('file_hashes', [])
+    })
 
 @app.route('/api/upload', methods=['POST'])
 @login_required

@@ -52,34 +52,38 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Inicialización principal de la aplicación
     function initApp() {
+        // Cargar la lista de modelos disponibles primero (es más rápido)
+        loadAvailableModels();
+        
+        // Cargar la lista de archivos (también rápido)
+        loadFiles();
+        
         // Cargar la lista de chats
         loadChatList();
         
-        // Cargar la lista de modelos disponibles
-        loadAvailableModels();
-          // Cargar la lista de archivos
-        loadFiles();
-        
         // Buscar y cargar el último chat activo (añadido por el servidor en la sesión)
-        fetch('/api/chats')
-            .then(response => response.json())
-            .then(chats => {                if (chats && chats.length > 0) {
-                    // Verificamos si ya hay una sesión activa con chat_id
-                    const activeChatItem = document.querySelector('.chat-item.active');
-                    if (activeChatItem) {
-                        // Si ya hay un chat activo, lo cargamos
-                        loadChat(activeChatItem.dataset.id);
+        // Usar un pequeño timeout para permitir que la UI se renderice primero
+        setTimeout(() => {
+            fetch('/api/chats')
+                .then(response => response.json())
+                .then(chats => {                    if (chats && chats.length > 0) {
+                        // Verificamos si ya hay una sesión activa con chat_id
+                        const activeChatItem = document.querySelector('.chat-item.active');
+                        if (activeChatItem) {
+                            // Si ya hay un chat activo, lo cargamos
+                            loadChat(activeChatItem.dataset.id);
+                        } else {
+                            // Si no hay chat activo, cargamos el primero de la lista (el más reciente)
+                            loadChat(chats[0].id);
+                        }
                     } else {
-                        // Si no hay chat activo, cargamos el primero de la lista (el más reciente)
-                        loadChat(chats[0].id);
+                        // No hay chats, mostramos mensaje de bienvenida inicial
+                        clearChatMessages();
+                        showWelcomeMessage();
                     }
-                } else {
-                    // No hay chats, mostramos mensaje de bienvenida inicial
-                    clearChatMessages();
-                    showWelcomeMessage();
-                }
-            })
-            .catch(error => console.error('Error obteniendo la lista de chats:', error));
+                })
+                .catch(error => console.error('Error obteniendo la lista de chats:', error));
+        }, 100); // Pequeño delay para mejorar la percepción de velocidad
     }
 
     // Función para mostrar el mensaje de bienvenida en el chat
@@ -99,6 +103,8 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(response => response.json())        .then(data => {
             currentChatId = data.chat_id;
+            // Limpiar los datos del chat actual al crear uno nuevo
+            currentChatData = null;
             clearChatMessages();
             // Mostrar mensaje de bienvenida después de crear un nuevo chat
             showWelcomeMessage();
@@ -190,47 +196,122 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
+        // Mostrar indicador de carga
+        clearChatMessages();
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'loading-indicator';
+        loadingDiv.innerHTML = '<div class="loading-spinner"></div><span>Cargando conversación...</span>';
+        loadingDiv.id = 'chat-loading-indicator';
+        chatMessages.appendChild(loadingDiv);
+
         fetch(`/api/chat/${chatId}`)
-        .then(response => response.json())        .then(messages => {
+        .then(response => response.json())
+        .then(data => {
+            // Almacenar los datos del chat actual
+            currentChatData = data;
+            
+            // Remover indicador de carga
+            const loadingIndicator = document.getElementById('chat-loading-indicator');
+            if (loadingIndicator) {
+                loadingIndicator.remove();
+            }
+            
             clearChatMessages();
+            
+            // Extraer los mensajes de la respuesta
+            const messages = data.messages || data; // Compatibilidad con respuesta anterior
             
             // Si no hay mensajes, mostrar el mensaje de bienvenida
             if (messages.length === 0) {
                 showWelcomeMessage();
             } else {
-                // Mostrar los mensajes existentes
+                // Crear un fragmento de documento para cargar todos los mensajes de una vez
+                const fragment = document.createDocumentFragment();
+                
+                // Procesar todos los mensajes y añadirlos al fragmento
                 messages.forEach(msg => {
-                    addMessageToChat(msg.role, msg.content);
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `message ${msg.role}-message`;
+
+                    let formattedContent = '';
+
+                    // Verificar si el contenido es un array (formato multimodal) o texto simple
+                    if (Array.isArray(msg.content)) {
+                        // Formato multimodal: procesar cada elemento del array
+                        msg.content.forEach(item => {
+                            if (item.type === 'text') {
+                                // Añadir texto formateado
+                                formattedContent += formatContent(item.text);
+                            } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
+                                // Añadir imagen
+                                formattedContent += `<img src="${item.image_url.url}" alt="Imagen adjunta" style="max-width: 100%; height: auto; margin: 10px 0;">`;
+                            }
+                        });
+                    } else {
+                        // Formato de texto simple: procesar normalmente
+                        formattedContent = formatContent(msg.content);
+                    }
+
+                    messageDiv.innerHTML = formattedContent;
+                    fragment.appendChild(messageDiv);
                 });
+                
+                // Añadir todos los mensajes de una vez al DOM
+                chatMessages.appendChild(fragment);
             }
             
-            // Asegurarse de que MathJax renderice toda la página después de cargar el chat
+            // Renderizar MathJax una sola vez para todos los mensajes
             if (window.MathJax) {
-                window.MathJax.typesetPromise().catch((err) => {
+                window.MathJax.typesetPromise([chatMessages]).catch((err) => {
                     console.error('Error al renderizar LaTeX después de cargar el chat:', err);
                 });
             }
             
             scrollToBottom();
         })
-        .catch(error => console.error('Error loading chat:', error));
+        .catch(error => {
+            console.error('Error loading chat:', error);
+            // Remover indicador de carga en caso de error
+            const loadingIndicator = document.getElementById('chat-loading-indicator');
+            if (loadingIndicator) {
+                loadingIndicator.remove();
+            }
+            clearChatMessages();
+            addMessageToChat('assistant', 'Error al cargar la conversación. Por favor, intenta de nuevo.');
+        });
     }
 
     // Función para limpiar los mensajes del chat
     function clearChatMessages() {
         chatMessages.innerHTML = '';
-    }    // Función para añadir un mensaje al chat
+    }    // Función para añadir un mensaje al chat (optimizada para mensajes individuales)
     function addMessageToChat(role, content) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}-message`;
 
-        // Procesar el contenido para formatear código, enlaces y fórmulas LaTeX
-        const formattedContent = formatContent(content);
+        let formattedContent = '';
+
+        // Verificar si el contenido es un array (formato multimodal) o texto simple
+        if (Array.isArray(content)) {
+            // Formato multimodal: procesar cada elemento del array
+            content.forEach(item => {
+                if (item.type === 'text') {
+                    // Añadir texto formateado
+                    formattedContent += formatContent(item.text);
+                } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
+                    // Añadir imagen
+                    formattedContent += `<img src="${item.image_url.url}" alt="Imagen adjunta" style="max-width: 100%; height: auto; margin: 10px 0;">`;
+                }
+            });
+        } else {
+            // Formato de texto simple: procesar normalmente
+            formattedContent = formatContent(content);
+        }
 
         messageDiv.innerHTML = formattedContent;
         chatMessages.appendChild(messageDiv);
         
-        // Actualizar la renderización de MathJax
+        // Actualizar la renderización de MathJax solo para este mensaje específico
         if (window.MathJax) {
             window.MathJax.typesetPromise([messageDiv]).catch((err) => {
                 console.error('Error al renderizar LaTeX:', err);
@@ -1196,6 +1277,9 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(error => console.error('Error updating chat title:', error));
     }
 
+    // Variable para almacenar los datos del chat actual
+    let currentChatData = null;
+
     // Función para abrir el modal de mensaje del sistema
     function openSystemMessageModal() {
         if (!currentChatId) {
@@ -1207,12 +1291,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const messageInput = document.getElementById('system-message-input');
         const saveBtn = document.getElementById('save-system-message-btn');
 
-        // Obtener el mensaje del sistema actual si existe
-        fetch(`/api/chat/${currentChatId}`)
-        .then(response => response.json())
-        .then(data => {
-            // Buscar el mensaje del sistema en los datos del chat
-            const systemMessage = data.system_message || '';
+        // Si tenemos los datos del chat actual, usar el system message de ahí
+        if (currentChatData && currentChatData.system_message !== undefined) {
+            const systemMessage = currentChatData.system_message || '';
             messageInput.value = systemMessage;
 
             // Mostrar el modal
@@ -1230,8 +1311,36 @@ document.addEventListener('DOMContentLoaded', function() {
             closeButtons.forEach(btn => {
                 btn.onclick = () => modal.classList.remove('open');
             });
-        })
-        .catch(error => console.error('Error loading system message:', error));
+        } else {
+            // Si no tenemos los datos en memoria, cargarlos del servidor
+            fetch(`/api/chat/${currentChatId}`)
+            .then(response => response.json())
+            .then(data => {
+                // Almacenar los datos del chat actual
+                currentChatData = data;
+                
+                // Buscar el mensaje del sistema en los datos del chat
+                const systemMessage = data.system_message || '';
+                messageInput.value = systemMessage;
+
+                // Mostrar el modal
+                modal.classList.add('open');
+                messageInput.focus();
+
+                // Configurar el botón de guardar
+                saveBtn.onclick = () => {
+                    updateSystemMessage(currentChatId, messageInput.value);
+                    modal.classList.remove('open');
+                };
+
+                // Configurar cierre del modal
+                const closeButtons = modal.querySelectorAll('.modal-close, .cancel-btn');
+                closeButtons.forEach(btn => {
+                    btn.onclick = () => modal.classList.remove('open');
+                });
+            })
+            .catch(error => console.error('Error loading system message:', error));
+        }
     }
 
     // Función para actualizar el mensaje del sistema
@@ -1248,6 +1357,11 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
+                // Actualizar los datos del chat actual en memoria
+                if (currentChatData) {
+                    currentChatData.system_message = systemMessage;
+                }
+                
                 // Opcional: mostrar un mensaje de éxito
                 addMessageToChat('assistant', 'Mensaje del sistema actualizado correctamente.');
             } else {
