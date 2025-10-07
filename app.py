@@ -1,4 +1,5 @@
 import os
+import re as _re  # Para limpiar etiquetas [WORD_DOC]
 import uuid
 import json
 import io
@@ -17,6 +18,75 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import AzureOpenAIEmbeddings
 from dotenv import load_dotenv
 from models import db, User, Chat, Message, File
+from doc_export import procesar_respuesta  # Nuevo: exportación automática a Word
+
+# Utilidad para limpiar marcadores [WORD_DOC] del texto mostrado al usuario
+def clean_word_doc_markers(text):
+    if not isinstance(text, str):
+        return text
+    try:
+        cleaned = _re.sub(r"\[WORD_DOC\]", "", text)
+        cleaned = _re.sub(r"\[/WORD_DOC\]", "", cleaned)
+        return cleaned.strip()
+    except Exception as e:
+        logger.error(f"Error limpiando marcadores WORD_DOC: {e}", "app.clean_word_doc_markers")
+        return text
+
+# Detección heurística de intención de generar documento Word
+def detect_word_doc_intent(message: str) -> bool:
+    """Detecta si el usuario está solicitando explícitamente la generación de un documento.
+
+    Estrategia heurística multilingüe (principalmente español) basada en:
+    - Palabras clave directas (documento, word, docx, informe, especificación, reporte, memoria, documentación)
+    - Expresiones verbales (genera, crea, elabora, redacta) combinadas con términos de documento
+    - Patrones regex simples (e.g. crea.*informe, genera.*documento)
+    - Estructuras sugerentes (# títulos múltiples solicitados, mención de índice / tabla de contenidos)
+    """
+    if not isinstance(message, str):
+        return False
+    text = message.lower()
+    # Eliminamos etiquetas HTML simples para evitar ruido
+    text = _re.sub(r"<[^>]+>", " ", text)
+
+    keywords = [
+        "documento", "word", "docx", "informe", "especificación", "especificacion", "reporte",
+        "memoria", "documentación", "documentacion", "plantilla", "propuesta", "resumen ejecutivo",
+        "especificaciones", "ficha técnica", "ficha tecnica", "manual", "guía", "guia"
+    ]
+    verbs = ["genera", "generar", "crear", "crea", "elabora", "elaborar", "redacta", "redactar", "haz", "produce", "producir"]
+
+    # Señales directas: combinación verbo + palabra clave
+    for v in verbs:
+        for k in keywords:
+            if f"{v} un {k}" in text or f"{v} una {k}" in text or f"{v} el {k}" in text:
+                return True
+
+    # Palabras clave aisladas acompañadas de formato deseado
+    if any(k in text for k in keywords):
+        if any(v in text for v in verbs):
+            return True
+        # Si menciona exportar / convertir
+        if "exporta" in text or "convierte" in text or "en word" in text:
+            return True
+
+    # Patrones regex generales
+    regex_patterns = [
+        r"genera.+documento", r"crea.+informe", r"elabora.+documento", r"redacta.+especificaci[óo]n",
+        r"(documento|informe) completo", r"estructura (del )?(documento|informe)", r"plantilla.+(documento|informe)"
+    ]
+    if any(_re.search(p, text) for p in regex_patterns):
+        return True
+
+    # Estructuras solicitadas típicas de documentos
+    structural_cues = ["tabla de contenidos", "table of contents", "índice", "indice", "secciones", "apartados"]
+    if any(cue in text for cue in structural_cues) and any(k in text for k in keywords):
+        return True
+
+    # Indicios de formato extenso (pide secciones numeradas)
+    if _re.search(r"secci[óo]n(es)? [1-9]", text) and any(k in text for k in keywords):
+        return True
+
+    return False
 import fitz  # PyMuPDF
 from PIL import Image
 import numpy as np
@@ -713,6 +783,9 @@ def chat():
         # Si no hay imágenes, añadir el mensaje como texto normal
         messages.append({"role": "user", "content": user_message})
 
+    # Detectar intención de documento antes de construir el system prompt
+    intent_detected = detect_word_doc_intent(user_message)
+
     # Realizar RAG si hay archivos subidos
     context = ""
     if file_hashes:
@@ -737,10 +810,20 @@ def chat():
 Si la información no es suficiente para responder, utiliza tu conocimiento general pero indica que estás complementando con información que no está en los documentos."""
     # Si no hay mensaje personalizado ni contexto, usar el mensaje predeterminado
     elif not system_message:
-        system_message = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa."
+        system_message = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas."
     # Si hay mensaje personalizado y contexto, añadir el contexto al mensaje personalizado
     elif context:
         system_message = f"{system_message}\n\nAdemás, utiliza la siguiente información de los documentos para responder:\n\n{context}"
+
+    # Si se detectó intención de documento, reforzar instrucciones para forzar bloque [WORD_DOC]
+    if intent_detected:
+        doc_instruction = (
+            "\n\nIMPORTANTE: El usuario solicita un documento formal. Debes responder UNICAMENTE con un "
+            "bloque delimitado por [WORD_DOC] y [/WORD_DOC] que contenga TODO el contenido del documento en Markdown "
+            "estructurado (título principal con #, secciones con ##, listas, tablas si procede, código si es necesario). "
+            "No añadas texto fuera de ese bloque. Incluye una estructura lógica, y si procede un índice opcional al inicio."
+        )
+        system_message += doc_instruction
 
     # Determinar el deployment a usar
     deployment = model_id if model_id else AZURE_OPENAI_DEPLOYMENT
@@ -884,10 +967,72 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
 
     chat_id = save_chat_history(user_id, messages, system_message_to_save, chat_data.get('title'))
 
+    # Fallback: si había intención de documento y el modelo NO devolvió bloque, auto-envolver
+    auto_wrapped = False
+    if intent_detected and "[WORD_DOC]" not in assistant_message:
+        assistant_message = f"[WORD_DOC]\n{assistant_message.strip()}\n[/WORD_DOC]"
+        auto_wrapped = True
+
+    # Mantener copia original (ya con posible auto-wrap) para exportación antes de limpiar
+    original_assistant_message = assistant_message
+
+    # Procesar posible bloque de documentación para exportar a Word (usa original)
+    export_info = {}
+    try:
+        export_info = procesar_respuesta(original_assistant_message)
+    except Exception as e:
+        logger.error(f"Error procesando exportación Word: {e}", "app.chat")
+        export_info = {"tiene_bloque": False, "error": str(e)}
+
+    # Limpiar tags [WORD_DOC] para mostrar en UI
+    cleaned_response = clean_word_doc_markers(original_assistant_message)
+
+    file_path = export_info.get("ruta_archivo") if export_info else None
+    file_name = os.path.basename(file_path) if file_path else None
+
     return jsonify({
-        "response": assistant_message,
-        "chat_id": chat_id
+        "response": cleaned_response.strip(),
+        "chat_id": chat_id,
+        "word_doc": {
+            "generated": export_info.get("tiene_bloque", False),
+            "intent_detected": intent_detected,
+            "auto_wrapped": auto_wrapped,
+            "file_path": file_path,
+            "file_name": file_name,
+            "download_url": f"/api/word_docs/{file_name}" if file_name else None,
+            "error": export_info.get("error")
+        }
     })
+
+
+@app.route('/api/word_docs/<filename>', methods=['GET'])
+@login_required
+def download_word_doc(filename):
+    """Descarga segura de documentos Word generados.
+
+    Solo permite archivos en el directorio configurado y con extensión .docx.
+    """
+    base_dir = os.environ.get('WORD_DOC_OUTPUT_DIR', os.path.join('data', 'word_docs'))
+    # Normalizar ruta
+    safe_base = os.path.abspath(base_dir)
+    requested_path = os.path.abspath(os.path.join(safe_base, filename))
+
+    # Validaciones de seguridad básicas
+    if not requested_path.startswith(safe_base):
+        logger.warning(f"Intento de acceso no permitido a {requested_path}", "app.download_word_doc")
+        return jsonify({"error": "Acceso no permitido"}), 403
+    if not filename.lower().endswith('.docx'):
+        return jsonify({"error": "Extensión inválida"}), 400
+    if not os.path.exists(requested_path):
+        return jsonify({"error": "Archivo no encontrado"}), 404
+
+    # Enviar archivo
+    try:
+        from flask import send_file
+        return send_file(requested_path, as_attachment=True, download_name=filename)
+    except Exception as e:
+        logger.error(f"Error enviando archivo Word: {e}", "app.download_word_doc")
+        return jsonify({"error": "No se pudo descargar el archivo"}), 500
 
 @app.route('/api/chats', methods=['GET'])
 def get_chats():

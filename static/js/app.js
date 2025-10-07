@@ -488,6 +488,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // Añadir respuesta del asistente
             addMessageToChat('assistant', data.response);
 
+            // Mostrar link de documento Word si se generó
+            if (data.word_doc && data.word_doc.generated && data.word_doc.download_url) {
+                const linkHtml = `<div class="word-doc-link"><a href="${data.word_doc.download_url}" target="_blank" rel="noopener">📄 Descargar documentación (${data.word_doc.file_name})</a></div>`;
+                addMessageToChat('assistant', linkHtml);
+            } else if (data.word_doc && data.word_doc.error) {
+                console.warn('Error generando Word:', data.word_doc.error);
+            }
+
             // Actualizar ID del chat si es necesario
             if (data.chat_id && (!currentChatId || currentChatId !== data.chat_id)) {
                 currentChatId = data.chat_id;
