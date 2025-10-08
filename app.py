@@ -12,6 +12,7 @@ from azure.core.credentials import AzureKeyCredential
 from openai import AzureOpenAI
 from werkzeug.utils import secure_filename
 import hashlib
+from sqlalchemy import text, inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
@@ -520,6 +521,36 @@ def backfill_missing_default_prompts():
                 "app.backfill_missing_default_prompts"
             )
 
+
+def ensure_user_type_consistency():
+    """Garantiza que la columna user_type exista y los roles estén correctamente asignados."""
+    try:
+        inspector = sa_inspect(db.engine)
+        user_table_name = User.__tablename__
+        column_names = {column['name'] for column in inspector.get_columns(user_table_name)}
+
+        with db.engine.begin() as connection:
+            if 'user_type' not in column_names:
+                logger.info("Añadiendo columna user_type a la tabla de usuarios", "app.ensure_user_type_consistency")
+                connection.execute(text(f"ALTER TABLE {user_table_name} ADD COLUMN user_type INTEGER DEFAULT 1"))
+
+            # Asegurar valores por defecto para filas existentes sin user_type
+            connection.execute(text(
+                f"UPDATE {user_table_name} SET user_type = 1 WHERE user_type IS NULL"
+            ))
+
+            # Si no existe ningún admin, convertir al usuario más antiguo en admin
+            connection.execute(text(
+                f"UPDATE {user_table_name} SET user_type = 0 "
+                f"WHERE id = (SELECT id FROM {user_table_name} ORDER BY id ASC LIMIT 1) "
+                f"AND NOT EXISTS (SELECT 1 FROM {user_table_name} WHERE user_type = 0)"
+            ))
+
+        logger.info("Roles de usuario actualizados: se garantiza al menos un administrador", "app.ensure_user_type_consistency")
+    except Exception as exc:
+        logger.error(f"No se pudo asegurar la consistencia de user_type: {exc}", "app.ensure_user_type_consistency")
+        db.session.rollback()
+
 def extract_images_from_pdf(file_path):
     """Extrae imágenes de un archivo PDF y realiza OCR o genera descripciones usando GPT-4o"""
     image_texts = []
@@ -788,7 +819,11 @@ def register():
 
         # Crear nuevo usuario y su prompt por defecto en una única transacción
         try:
-            user = User(username=username, email=email)
+            # Asignar tipo según si existen usuarios previos (el primero será admin)
+            existing_users = User.query.count()
+            new_user_type = 0 if existing_users == 0 else 1
+
+            user = User(username=username, email=email, user_type=new_user_type)
             user.set_password(password)
 
             db.session.add(user)
@@ -1461,6 +1496,63 @@ def help_page():
     """Renderiza la página de ayuda en una nueva pestaña."""
     return render_template('help.html')
 
+
+@app.route('/api/account/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """Actualiza la contraseña del usuario autenticado."""
+    data = request.get_json(silent=True) or {}
+    current_password = (data.get('current_password') or '').strip()
+    new_password = (data.get('new_password') or '').strip()
+
+    if not current_password or not new_password:
+        return jsonify({
+            "success": False,
+            "error": "La contraseña actual y la nueva son obligatorias."
+        }), 400
+
+    if len(new_password) < 8:
+        return jsonify({
+            "success": False,
+            "error": "La nueva contraseña debe tener al menos 8 caracteres."
+        }), 400
+
+    if not current_user.check_password(current_password):
+        logger.warning(
+            f"Intento fallido de cambio de contraseña para usuario {current_user.id}",
+            "app.change_password"
+        )
+        return jsonify({
+            "success": False,
+            "error": "La contraseña actual no es correcta."
+        }), 400
+
+    if current_password == new_password:
+        return jsonify({
+            "success": False,
+            "error": "La nueva contraseña debe ser diferente a la actual."
+        }), 400
+
+    try:
+        current_user.set_password(new_password)
+        db.session.commit()
+        logger.info(
+            f"Contraseña actualizada para el usuario {current_user.id}",
+            "app.change_password"
+        )
+        return jsonify({"success": True}), 200
+    except Exception as exc:
+        db.session.rollback()
+        logger.error(
+            f"Error al actualizar la contraseña para el usuario {current_user.id}: {exc}",
+            "app.change_password"
+        )
+        return jsonify({
+            "success": False,
+            "error": "No se pudo actualizar la contraseña. Inténtalo nuevamente."
+        }), 500
+
+
 @app.route('/api/chat/<chat_id>', methods=['DELETE'])
 def delete_chat(chat_id):
     """Endpoint para eliminar un chat"""
@@ -1647,6 +1739,7 @@ def get_chat_files(chat_id):
 # Register a function to create tables with app context
 with app.app_context():
     db.create_all()
+    ensure_user_type_consistency()
     backfill_missing_default_prompts()
 
 @app.route('/chat-stream', methods=['POST'])

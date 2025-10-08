@@ -13,6 +13,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const savedPromptsSelect = document.getElementById('saved-prompts-select');
     const storeSystemPromptBtn = document.getElementById('store-system-prompt-btn');
     const systemPromptsFeedback = document.getElementById('system-prompts-feedback');
+    const userMenuToggle = document.getElementById('user-menu-toggle');
+    const userMenuDropdown = document.getElementById('user-menu-dropdown');
+    const userMenuItems = document.querySelectorAll('.user-menu-item');
+    const changePasswordTrigger = document.querySelector('[data-action="change-password"]');
+    const changePasswordModal = document.getElementById('change-password-modal');
+    const changePasswordForm = document.getElementById('change-password-form');
+    const changePasswordFeedback = document.getElementById('change-password-feedback');
+    const changePasswordSubmitBtn = document.getElementById('change-password-submit');
+    const changePasswordInputs = {
+        current: document.getElementById('current-password'),
+        next: document.getElementById('new-password'),
+        confirm: document.getElementById('confirm-new-password')
+    };
+
+    if (changePasswordSubmitBtn && !changePasswordSubmitBtn.dataset.originalText) {
+        changePasswordSubmitBtn.dataset.originalText = changePasswordSubmitBtn.textContent;
+    }
 
     // Elementos del panel de archivos
     const filesPanel = document.getElementById('files-panel');
@@ -57,6 +74,210 @@ document.addEventListener('DOMContentLoaded', function() {
         localStorage.setItem('darkMode', isDarkMode);
         themeToggle.textContent = isDarkMode ? '☀️' : '🌙';
     });
+
+    function openUserMenu() {
+        if (!userMenuDropdown || !userMenuToggle) {
+            return;
+        }
+
+        userMenuDropdown.classList.add('open');
+        userMenuDropdown.setAttribute('aria-hidden', 'false');
+        userMenuToggle.setAttribute('aria-expanded', 'true');
+
+        const firstItem = userMenuDropdown.querySelector('.user-menu-item');
+        if (firstItem) {
+            setTimeout(() => firstItem.focus(), 0);
+        }
+    }
+
+    function closeUserMenu() {
+        if (!userMenuDropdown || !userMenuToggle) {
+            return;
+        }
+
+        userMenuDropdown.classList.remove('open');
+        userMenuDropdown.setAttribute('aria-hidden', 'true');
+        userMenuToggle.setAttribute('aria-expanded', 'false');
+    }
+
+    function setChangePasswordFeedback(message, type = 'info') {
+        if (!changePasswordFeedback) {
+            return;
+        }
+
+        changePasswordFeedback.textContent = message || '';
+        changePasswordFeedback.classList.remove('error', 'success');
+
+        if (type === 'error') {
+            changePasswordFeedback.classList.add('error');
+        } else if (type === 'success') {
+            changePasswordFeedback.classList.add('success');
+        }
+    }
+
+    function openChangePasswordModal() {
+        if (!changePasswordModal || !changePasswordForm) {
+            return;
+        }
+
+        changePasswordForm.reset();
+        setChangePasswordFeedback('');
+        changePasswordModal.classList.add('open');
+        changePasswordModal.setAttribute('aria-hidden', 'false');
+
+        const currentInput = changePasswordInputs.current;
+        if (currentInput) {
+            setTimeout(() => currentInput.focus(), 50);
+        }
+    }
+
+    function closeChangePasswordModal() {
+        if (!changePasswordModal) {
+            return;
+        }
+
+        changePasswordModal.classList.remove('open');
+        changePasswordModal.setAttribute('aria-hidden', 'true');
+
+        if (changePasswordSubmitBtn) {
+            changePasswordSubmitBtn.disabled = false;
+            const originalText = changePasswordSubmitBtn.dataset.originalText || 'Actualizar contraseña';
+            changePasswordSubmitBtn.textContent = originalText;
+        }
+    }
+
+    if (userMenuToggle && userMenuDropdown) {
+        userMenuToggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const isOpen = userMenuDropdown.classList.contains('open');
+            if (isOpen) {
+                closeUserMenu();
+            } else {
+                openUserMenu();
+            }
+        });
+
+        userMenuDropdown.addEventListener('click', (event) => {
+            event.stopPropagation();
+        });
+
+        userMenuItems.forEach(item => {
+            item.addEventListener('click', () => {
+                closeUserMenu();
+            });
+        });
+    }
+
+    if (changePasswordTrigger) {
+        changePasswordTrigger.addEventListener('click', () => {
+            closeUserMenu();
+            openChangePasswordModal();
+        });
+    }
+
+    if (changePasswordModal) {
+        changePasswordModal.setAttribute('aria-hidden', 'true');
+
+        const modalCloseButtons = changePasswordModal.querySelectorAll('.modal-close');
+        modalCloseButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                closeChangePasswordModal();
+            });
+        });
+    }
+
+    document.addEventListener('click', (event) => {
+        if (userMenuDropdown && userMenuDropdown.classList.contains('open')) {
+            const clickedInsideDropdown = userMenuDropdown.contains(event.target);
+            const clickedToggle = userMenuToggle && userMenuToggle.contains(event.target);
+            if (!clickedInsideDropdown && !clickedToggle) {
+                closeUserMenu();
+            }
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            if (userMenuDropdown && userMenuDropdown.classList.contains('open')) {
+                closeUserMenu();
+            }
+
+            if (changePasswordModal && changePasswordModal.classList.contains('open')) {
+                closeChangePasswordModal();
+            }
+        }
+    });
+
+    if (changePasswordForm) {
+        changePasswordForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const currentPassword = changePasswordInputs.current ? changePasswordInputs.current.value.trim() : '';
+            const newPassword = changePasswordInputs.next ? changePasswordInputs.next.value.trim() : '';
+            const confirmPassword = changePasswordInputs.confirm ? changePasswordInputs.confirm.value.trim() : '';
+
+            if (!currentPassword || !newPassword || !confirmPassword) {
+                setChangePasswordFeedback('Todos los campos son obligatorios.', 'error');
+                return;
+            }
+
+            if (newPassword.length < 8) {
+                setChangePasswordFeedback('La nueva contraseña debe tener al menos 8 caracteres.', 'error');
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                setChangePasswordFeedback('Las nuevas contraseñas no coinciden.', 'error');
+                return;
+            }
+
+            if (changePasswordSubmitBtn) {
+                changePasswordSubmitBtn.disabled = true;
+                if (!changePasswordSubmitBtn.dataset.originalText) {
+                    changePasswordSubmitBtn.dataset.originalText = changePasswordSubmitBtn.textContent;
+                }
+                changePasswordSubmitBtn.textContent = 'Actualizando…';
+            }
+
+            setChangePasswordFeedback('Actualizando contraseña...', 'info');
+
+            try {
+                const response = await fetch('/api/account/change-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        current_password: currentPassword,
+                        new_password: newPassword
+                    })
+                });
+
+                const data = await response.json().catch(() => ({}));
+
+                if (!response.ok || !data.success) {
+                    const errorMessage = data.error || 'No se pudo actualizar la contraseña.';
+                    setChangePasswordFeedback(errorMessage, 'error');
+                } else {
+                    setChangePasswordFeedback('Contraseña actualizada correctamente.', 'success');
+                    changePasswordForm.reset();
+                    setTimeout(() => {
+                        closeChangePasswordModal();
+                    }, 1200);
+                }
+            } catch (error) {
+                console.error('Error cambiando contraseña:', error);
+                setChangePasswordFeedback('Error de conexión al actualizar la contraseña.', 'error');
+            } finally {
+                if (changePasswordSubmitBtn) {
+                    changePasswordSubmitBtn.disabled = false;
+                    if (changePasswordSubmitBtn.dataset.originalText) {
+                        changePasswordSubmitBtn.textContent = changePasswordSubmitBtn.dataset.originalText;
+                    }
+                }
+            }
+        });
+    }
     
     // Inicialización principal de la aplicación
     function initApp() {

@@ -42,7 +42,7 @@ body {
     background-color: #005a9e;
 }
 
-.logout-btn, .user-header .theme-toggle {
+.logout-btn, .user-header .theme-toggle, .user-menu-toggle {
     background: none;
     color: white;
     border: none;
@@ -57,7 +57,7 @@ body {
     transition: background-color 0.2s, color 0.2s;
 }
 
-.logout-btn:hover, .user-header .theme-toggle:hover {
+.logout-btn:hover, .user-header .theme-toggle:hover, .user-menu-toggle:hover {
     background-color: rgba(255, 255, 255, 0.2);
     color: white;
 }
@@ -297,6 +297,44 @@ body.dark-mode .bottom-toolbar {
     border-color: #333;
 }
 
+body.dark-mode .user-menu-dropdown {
+    background: #1f2937;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.55);
+}
+
+body.dark-mode .user-menu-item {
+    color: #e5e7eb;
+}
+
+body.dark-mode .user-menu-item:hover,
+body.dark-mode .user-menu-item:focus {
+    background-color: rgba(59, 130, 246, 0.25);
+    color: #bfdbfe;
+}
+
+body.dark-mode .change-password-form input {
+    background: #111827;
+    border-color: #374151;
+    color: #f9fafb;
+}
+
+body.dark-mode .change-password-form input:focus {
+    outline-color: rgba(59, 130, 246, 0.45);
+    border-color: #60a5fa;
+}
+
+body.dark-mode .change-password-feedback {
+    color: #60a5fa;
+}
+
+body.dark-mode .change-password-feedback.error {
+    color: #f87171;
+}
+
+body.dark-mode .change-password-feedback.success {
+    color: #34d399;
+}
+
 /* Estilos para imágenes adjuntas */
 .chat-input-images {
     display: flex;
@@ -531,11 +569,147 @@ body.dark-mode .bottom-toolbar {
     border-bottom: 1px solid #ddd;
     background-color: #0078d4;
     color: white;
+    position: relative;
+    gap: 12px;
+}
+
+.user-identity {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.user-menu {
+    position: relative;
+}
+
+.user-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.user-menu-toggle:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+.user-menu-toggle[aria-expanded="true"] {
+    transform: rotate(90deg);
+}
+
+.user-menu-dropdown {
+    position: absolute;
+    top: 110%;
+    left: 0;
+    min-width: 200px;
+    background: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.25);
+    padding: 8px 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    z-index: 1200;
+}
+
+.user-menu-dropdown.open {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.user-menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: #1f2933;
+    font-size: 0.95rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.user-menu-item i {
+    font-size: 1rem;
+    color: inherit;
+}
+
+.user-menu-item:hover,
+.user-menu-item:focus {
+    background-color: rgba(0, 120, 212, 0.12);
+    color: #0b5ca8;
+    outline: none;
 }
 
 .username {
     font-weight: bold;
     font-size: 16px;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.change-password-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.change-password-form label {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.change-password-form input {
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    font-size: 1rem;
+}
+
+.change-password-form input:focus {
+    outline: 2px solid rgba(0, 120, 212, 0.35);
+    border-color: #0078d4;
+}
+
+.change-password-feedback {
+    min-height: 20px;
+    font-size: 0.9rem;
+    color: #0078d4;
+}
+
+.change-password-feedback.error {
+    color: #d93025;
+}
+
+.change-password-feedback.success {
+    color: #1b873f;
 }
 
 .modal-header h3 {
