@@ -66,3 +66,23 @@ class File(db.Model):
     
     def __repr__(self):
         return f'<File {self.filename}>'
+
+
+class UserPrompt(db.Model):
+    """User-scoped prompt catalog entries for system message presets."""
+    __tablename__ = 'user_prompts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True, nullable=False)
+    name = db.Column(db.String(150), nullable=False)
+    prompt_text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('prompts', lazy='dynamic', cascade='all, delete-orphan'))
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'name', name='uq_user_prompt_name'),
+    )
+
+    def __repr__(self):
+        return f'<UserPrompt {self.name}>'

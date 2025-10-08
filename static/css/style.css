@@ -269,17 +269,20 @@ body {
     background-color: #e0e0e0;
 }
 
-.version-info {
-    padding: 5px 10px;
-    font-size: 0.9em;
-    color: #666;
+
+.help-btn {
     margin-left: auto;
-    display: flex;
-    align-items: center;
+    font-weight: 600;
 }
 
-body.dark-mode .version-info {
-    color: #aaa;
+.help-btn i {
+    font-size: 1.1em;
+}
+
+.help-error {
+    color: #d93025;
+    font-weight: 600;
+    margin-top: 15px;
 }
 
 body.dark-mode .system-message-btn,
@@ -570,6 +573,57 @@ body.dark-mode .bottom-toolbar {
     margin-top: 10px;
 }
 
+.system-prompts-label {
+    display: block;
+    font-weight: 600;
+    margin-top: 10px;
+}
+
+.system-prompts-select {
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-family: inherit;
+}
+
+.system-prompts-feedback {
+    min-height: 18px;
+    font-size: 0.85rem;
+    color: #0078d4;
+    margin-top: 6px;
+}
+
+.system-prompts-feedback.error {
+    color: #d93025;
+}
+
+.system-prompt-editor {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.system-prompt-inline-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.secondary-btn {
+    padding: 6px 12px;
+    background-color: #f5f5f5;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.95rem;
+}
+
+.secondary-btn:hover {
+    background-color: #e8e8e8;
+}
+
 #chat-title-input {
     width: 100%;
     padding: 10px;
@@ -657,6 +711,30 @@ body.dark-mode #chat-title-input {
     background-color: #333;
     color: #e0e0e0;
     border-color: #444;
+}
+
+body.dark-mode .system-prompts-select {
+    background-color: #333;
+    color: #e0e0e0;
+    border-color: #444;
+}
+
+body.dark-mode .secondary-btn {
+    background-color: #333;
+    color: #e0e0e0;
+    border-color: #555;
+}
+
+body.dark-mode .secondary-btn:hover {
+    background-color: #3c3c3c;
+}
+
+body.dark-mode .system-prompts-feedback {
+    color: #4aa8ff;
+}
+
+body.dark-mode .system-prompts-feedback.error {
+    color: #ff6b6b;
 }
 
 body.dark-mode .cancel-btn {

@@ -88,7 +88,10 @@
                         </select>
                         <button id="system-message-btn" class="system-message-btn">⚙️ Mensaje del Sistema</button>
                     </div>
-                    <div class="version-info">v. <span id="app-version">0.5.0</span></div>
+                    <button id="help-btn" class="toolbar-btn help-btn" title="Ayuda">
+                        <i class="fas fa-question-circle"></i>
+                        <span>Ayuda</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -125,10 +128,20 @@
             </div>
             <div class="modal-body">
                 <p>Personaliza el mensaje del sistema para este chat:</p>
-                <textarea id="system-message-input" placeholder="Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa."></textarea>
+                <label for="saved-prompts-select" class="system-prompts-label">Mis prompts guardados</label>
+                <select id="saved-prompts-select" class="system-prompts-select">
+                    <option value="">Cargando prompts guardados...</option>
+                </select>
+                <div id="system-prompts-feedback" class="system-prompts-feedback" role="status" aria-live="polite"></div>
+                <div class="system-prompt-editor">
+                    <textarea id="system-message-input" placeholder="Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa."></textarea>
+                    <div class="system-prompt-inline-actions">
+                        <button id="store-system-prompt-btn" type="button" class="secondary-btn">Guardar</button>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
-                <button id="save-system-message-btn" class="primary-btn">Guardar</button>
+                <button id="save-system-message-btn" class="primary-btn">Aplicar</button>
                 <button class="cancel-btn modal-close">Cancelar</button>
             </div>
         </div>

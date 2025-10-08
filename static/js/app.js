@@ -8,6 +8,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatList = document.querySelector('.chat-list');
     const modelSelect = document.getElementById('model-select');
     const cameraBtn = document.getElementById('camera-btn');
+    const helpBtn = document.getElementById('help-btn');
+    const DEFAULT_SYSTEM_PROMPT_TEXT = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas.";
+    const savedPromptsSelect = document.getElementById('saved-prompts-select');
+    const storeSystemPromptBtn = document.getElementById('store-system-prompt-btn');
+    const systemPromptsFeedback = document.getElementById('system-prompts-feedback');
 
     // Elementos del panel de archivos
     const filesPanel = document.getElementById('files-panel');
@@ -23,6 +28,9 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentModelId = null;
     let chatInputImagesContainer = null;
     let attachedImages = [];
+    let activeChatRequestController = null;
+    // Catálogo de prompts personales obtenido del backend.
+    let savedPromptsCache = [];
 
     // Cola de procesamiento de archivos
     let uploadQueue = [];
@@ -93,24 +101,48 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Función para crear un nuevo chat
-    function createNewChat() {
-        fetch('/api/new_chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({}) // Add empty JSON body
-        })
-        .then(response => response.json())        .then(data => {
+    async function createNewChat() {
+        const systemMessageInput = document.getElementById('system-message-input');
+        const currentSystemMessage = systemMessageInput ? systemMessageInput.value : '';
+
+        await persistCurrentSystemMessage(currentChatId, currentSystemMessage);
+        cancelActiveChatRequest();
+
+        try {
+            const response = await fetch('/api/new_chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+            });
+
+            if (!response.ok) {
+                throw new Error(`Error HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
             currentChatId = data.chat_id;
-            // Limpiar los datos del chat actual al crear uno nuevo
-            currentChatData = null;
+
+            const defaultPromptEntry = savedPromptsCache.find(prompt => prompt.name === 'Default');
+            const defaultPromptText = defaultPromptEntry ? defaultPromptEntry.prompt_text : DEFAULT_SYSTEM_PROMPT_TEXT;
+
+            if (systemMessageInput) {
+                systemMessageInput.value = defaultPromptText;
+            }
+
+            currentChatData = {
+                messages: [],
+                system_message: defaultPromptText
+            };
+
             clearChatMessages();
-            // Mostrar mensaje de bienvenida después de crear un nuevo chat
+            clearChatInputState();
             showWelcomeMessage();
             loadChatList();
-        })
-        .catch(error => console.error('Error creating new chat:', error));
+        } catch (error) {
+            console.error('Error creating new chat:', error);
+        }
     }
 
     // Función para cargar la lista de chats
@@ -184,9 +216,64 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!dateString) return '';
         const date = new Date(dateString);
         return date.toLocaleString();
-    }    // Función para cargar un chat específico
-    function loadChat(chatId) {
-        currentChatId = chatId;
+    }
+
+    async function persistCurrentSystemMessage(chatId, systemMessageValue) {
+        if (!chatId) {
+            return;
+        }
+
+        const newValue = systemMessageValue ?? '';
+        const storedValue = (currentChatId === chatId && currentChatData)
+            ? (currentChatData.system_message || '')
+            : '';
+
+        if (newValue === storedValue) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/chat/${chatId}/system_message`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    system_message: newValue
+                })
+            });
+
+            if (!response.ok) {
+                console.error('No se pudo guardar el mensaje del sistema antes de cambiar de conversación.');
+                return;
+            }
+
+            if (currentChatId === chatId) {
+                currentChatData = currentChatData || {};
+                currentChatData.system_message = newValue;
+            }
+        } catch (error) {
+            console.error('Error guardando el mensaje del sistema:', error);
+        }
+    }
+
+    // Función para cargar un chat específico
+    async function loadChat(chatId) {
+        if (!chatId) {
+            return;
+        }
+
+    const systemMessageInput = document.getElementById('system-message-input');
+    const currentSystemMessage = systemMessageInput ? systemMessageInput.value : '';
+    const previousChatId = currentChatId;
+
+    await persistCurrentSystemMessage(previousChatId, currentSystemMessage);
+
+        cancelActiveChatRequest();
+        clearChatInputState();
+
+    currentChatId = chatId;
+    currentChatData = null;
 
         // Actualizar la clase activa en la lista de chats
         document.querySelectorAll('.chat-item').forEach(item => {
@@ -196,89 +283,85 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // Mostrar indicador de carga
-        clearChatMessages();
         const loadingDiv = document.createElement('div');
         loadingDiv.className = 'loading-indicator';
         loadingDiv.innerHTML = '<div class="loading-spinner"></div><span>Cargando conversación...</span>';
         loadingDiv.id = 'chat-loading-indicator';
+
+        clearChatMessages();
         chatMessages.appendChild(loadingDiv);
 
-        fetch(`/api/chat/${chatId}`)
-        .then(response => response.json())
-        .then(data => {
-            // Almacenar los datos del chat actual
+        try {
+            const response = await fetch(`/api/chat/${chatId}`);
+            if (!response.ok) {
+                throw new Error(`Error HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            currentChatId = chatId;
             currentChatData = data;
-            
-            // Remover indicador de carga
+
             const loadingIndicator = document.getElementById('chat-loading-indicator');
             if (loadingIndicator) {
                 loadingIndicator.remove();
             }
-            
+
             clearChatMessages();
-            
-            // Extraer los mensajes de la respuesta
-            const messages = data.messages || data; // Compatibilidad con respuesta anterior
-            
-            // Si no hay mensajes, mostrar el mensaje de bienvenida
+
+            if (systemMessageInput) {
+                const nextSystemPrompt = data.system_message || DEFAULT_SYSTEM_PROMPT_TEXT;
+                systemMessageInput.value = nextSystemPrompt;
+                setSystemPromptsFeedback('');
+            }
+
+            const messages = data.messages || data;
+
             if (messages.length === 0) {
                 showWelcomeMessage();
             } else {
-                // Crear un fragmento de documento para cargar todos los mensajes de una vez
                 const fragment = document.createDocumentFragment();
-                
-                // Procesar todos los mensajes y añadirlos al fragmento
+
                 messages.forEach(msg => {
                     const messageDiv = document.createElement('div');
                     messageDiv.className = `message ${msg.role}-message`;
 
                     let formattedContent = '';
 
-                    // Verificar si el contenido es un array (formato multimodal) o texto simple
                     if (Array.isArray(msg.content)) {
-                        // Formato multimodal: procesar cada elemento del array
                         msg.content.forEach(item => {
                             if (item.type === 'text') {
-                                // Añadir texto formateado
                                 formattedContent += formatContent(item.text);
                             } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
-                                // Añadir imagen
                                 formattedContent += `<img src="${item.image_url.url}" alt="Imagen adjunta" style="max-width: 100%; height: auto; margin: 10px 0;">`;
                             }
                         });
                     } else {
-                        // Formato de texto simple: procesar normalmente
                         formattedContent = formatContent(msg.content);
                     }
 
                     messageDiv.innerHTML = formattedContent;
                     fragment.appendChild(messageDiv);
                 });
-                
-                // Añadir todos los mensajes de una vez al DOM
+
                 chatMessages.appendChild(fragment);
             }
-            
-            // Renderizar MathJax una sola vez para todos los mensajes
+
             if (window.MathJax) {
                 window.MathJax.typesetPromise([chatMessages]).catch((err) => {
                     console.error('Error al renderizar LaTeX después de cargar el chat:', err);
                 });
             }
-            
+
             scrollToBottom();
-        })
-        .catch(error => {
+        } catch (error) {
             console.error('Error loading chat:', error);
-            // Remover indicador de carga en caso de error
             const loadingIndicator = document.getElementById('chat-loading-indicator');
             if (loadingIndicator) {
                 loadingIndicator.remove();
             }
             clearChatMessages();
             addMessageToChat('assistant', 'Error al cargar la conversación. Por favor, intenta de nuevo.');
-        });
+        }
     }
 
     // Función para limpiar los mensajes del chat
@@ -410,26 +493,43 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function cancelActiveChatRequest() {
+        if (activeChatRequestController) {
+            activeChatRequestController.abort();
+            activeChatRequestController = null;
+            hideTypingIndicator();
+        }
+    }
+
+    function clearChatInputState() {
+        if (chatInput) {
+            chatInput.value = '';
+        }
+
+        attachedImages = [];
+
+        if (chatInputImagesContainer) {
+            chatInputImagesContainer.innerHTML = '';
+            chatInputImagesContainer.style.display = 'none';
+        }
+    }
+
     // Función para desplazarse al final del chat
     function scrollToBottom() {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
     // Función para enviar un mensaje
-    function sendMessage() {
+    async function sendMessage() {
         const message = chatInput.value.trim();
         if (!message) return;
 
         // Crear nuevo chat si no hay uno activo
         if (!currentChatId) {
-            createNewChat();
-            setTimeout(() => {
-                sendMessageToServer(message);
-            }, 500);
-        } else {
-            sendMessageToServer(message);
+            await createNewChat();
         }
 
+        sendMessageToServer(message);
         chatInput.value = '';
     }
 
@@ -458,6 +558,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        // Cancelar peticiones anteriores y preparar una nueva
+        cancelActiveChatRequest();
+        activeChatRequestController = new AbortController();
+
         // Añadir mensaje del usuario al chat
         addMessageToChat('user', messageContent);
 
@@ -473,6 +577,7 @@ document.addEventListener('DOMContentLoaded', function() {
             headers: {
                 'Content-Type': 'application/json'
             },
+            signal: activeChatRequestController.signal,
             body: JSON.stringify({
                 message: messageContent,
                 chat_id: currentChatId,
@@ -503,9 +608,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         })
         .catch(error => {
+            if (error.name === 'AbortError') {
+                console.info('Solicitud de chat cancelada:', error);
+                return;
+            }
             console.error('Error sending message:', error);
             hideTypingIndicator();
             addMessageToChat('assistant', 'Lo siento, ha ocurrido un error al procesar tu mensaje.');
+        })
+        .finally(() => {
+            activeChatRequestController = null;
         });
     }
 
@@ -1220,8 +1332,25 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    // Si el chat eliminado es el actual, limpiar la vista
-                    if (chatId === currentChatId) {
+                    const systemMessageInput = document.getElementById('system-message-input');
+
+                    if (data.new_chat) {
+                        currentChatId = data.new_chat.chat_id;
+
+                        if (systemMessageInput) {
+                            systemMessageInput.value = data.new_chat.system_message || '';
+                        }
+
+                        currentChatData = {
+                            messages: [],
+                            system_message: data.new_chat.system_message || ''
+                        };
+
+                        clearChatMessages();
+                        clearChatInputState();
+                        showWelcomeMessage();
+                    } else if (chatId === currentChatId) {
+                        // Si el chat eliminado es el actual y aún quedan otros, limpiar vista
                         currentChatId = null;
                         clearChatMessages();
                     }
@@ -1288,6 +1417,177 @@ document.addEventListener('DOMContentLoaded', function() {
     // Variable para almacenar los datos del chat actual
     let currentChatData = null;
 
+    /**
+     * Muestra un mensaje contextual dentro del modal de prompts guardados.
+     * @param {string} message Mensaje a mostrar.
+     * @param {boolean} isError Indica si el mensaje corresponde a un error.
+     */
+    function setSystemPromptsFeedback(message, isError = false) {
+        if (!systemPromptsFeedback) {
+            return;
+        }
+
+        systemPromptsFeedback.textContent = message || '';
+        if (isError) {
+            systemPromptsFeedback.classList.add('error');
+        } else {
+            systemPromptsFeedback.classList.remove('error');
+        }
+    }
+
+    /**
+     * Rellena el desplegable con los prompts guardados en caché.
+     * @param {string} [selectedPromptId] ID que se debe mantener seleccionado tras el renderizado.
+     */
+    function populateSavedPromptsDropdown(selectedPromptId = '') {
+        if (!savedPromptsSelect) {
+            return;
+        }
+
+        savedPromptsSelect.innerHTML = '';
+
+        const placeholderOption = document.createElement('option');
+        placeholderOption.value = '';
+        placeholderOption.textContent = savedPromptsCache.length
+            ? 'Selecciona un prompt guardado…'
+            : 'No tienes prompts guardados todavía';
+        placeholderOption.selected = true;
+        savedPromptsSelect.appendChild(placeholderOption);
+
+        savedPromptsSelect.disabled = savedPromptsCache.length === 0;
+
+        savedPromptsCache.forEach(prompt => {
+            const option = document.createElement('option');
+            option.value = prompt.id.toString();
+            option.textContent = prompt.name;
+            savedPromptsSelect.appendChild(option);
+        });
+
+        if (selectedPromptId) {
+            savedPromptsSelect.value = selectedPromptId;
+            savedPromptsSelect.dispatchEvent(new Event('change'));
+        } else {
+            savedPromptsSelect.value = '';
+        }
+    }
+
+    /**
+     * Solicita los prompts guardados al backend y refresca el desplegable.
+     * @param {string} [selectedPromptId] ID que se debe seleccionar al terminar.
+     */
+    function fetchSavedPrompts(selectedPromptId = '') {
+        if (!savedPromptsSelect) {
+            return Promise.resolve();
+        }
+
+        setSystemPromptsFeedback('Cargando prompts guardados…');
+
+        return fetch('/api/user_prompts')
+            .then(response => {
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        // El usuario debe autenticarse para usar el catálogo personal.
+                        savedPromptsCache = [];
+                        populateSavedPromptsDropdown();
+                        setSystemPromptsFeedback('Inicia sesión para guardar tus prompts.', true);
+                        return null;
+                    }
+                    throw new Error('No se pudieron cargar los prompts guardados.');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (!data) {
+                    return;
+                }
+
+                savedPromptsCache = data.prompts || [];
+                populateSavedPromptsDropdown(selectedPromptId);
+                setSystemPromptsFeedback(savedPromptsCache.length ? '' : 'No tienes prompts guardados todavía.');
+            })
+            .catch(error => {
+                console.error('Error obteniendo prompts guardados:', error);
+                setSystemPromptsFeedback(error.message || 'Error al cargar los prompts guardados.', true);
+            });
+    }
+
+    if (savedPromptsSelect) {
+        savedPromptsSelect.addEventListener('change', () => {
+            const selectedId = savedPromptsSelect.value;
+
+            if (!selectedId) {
+                setSystemPromptsFeedback('');
+                return;
+            }
+
+            const selectedPrompt = savedPromptsCache.find(prompt => prompt.id.toString() === selectedId);
+
+            if (selectedPrompt) {
+                const messageInput = document.getElementById('system-message-input');
+                if (messageInput) {
+                    messageInput.value = selectedPrompt.prompt_text;
+                    messageInput.focus();
+                }
+                setSystemPromptsFeedback(`Prompt "${selectedPrompt.name}" cargado.`);
+            }
+        });
+    }
+
+    if (storeSystemPromptBtn) {
+        storeSystemPromptBtn.addEventListener('click', () => {
+            const messageInput = document.getElementById('system-message-input');
+            if (!messageInput) {
+                return;
+            }
+
+            const promptText = messageInput.value.trim();
+            if (!promptText) {
+                setSystemPromptsFeedback('Escribe un prompt antes de guardarlo.', true);
+                messageInput.focus();
+                return;
+            }
+
+            const currentSelection = savedPromptsCache.find(prompt => prompt.id.toString() === savedPromptsSelect?.value);
+            const defaultName = currentSelection ? currentSelection.name : '';
+
+            const promptName = window.prompt('Introduce un nombre para el prompt que deseas guardar:', defaultName);
+            if (promptName === null) {
+                return;
+            }
+
+            const trimmedName = promptName.trim();
+            if (!trimmedName) {
+                setSystemPromptsFeedback('El nombre del prompt no puede estar vacío.', true);
+                return;
+            }
+
+            fetch('/api/user_prompts', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: trimmedName,
+                    prompt_text: promptText
+                })
+            })
+                .then(response => response.json().then(data => ({ ok: response.ok, data })))
+                .then(({ ok, data }) => {
+                    if (!ok || !data.success) {
+                        throw new Error(data.error || 'No se pudo guardar el prompt.');
+                    }
+
+                    const savedPromptId = data.prompt?.id ? data.prompt.id.toString() : '';
+                    setSystemPromptsFeedback(`Prompt "${data.prompt.name}" guardado correctamente.`);
+                    fetchSavedPrompts(savedPromptId);
+                })
+                .catch(error => {
+                    console.error('Error al guardar prompt:', error);
+                    setSystemPromptsFeedback(error.message || 'Error al guardar el prompt.', true);
+                });
+        });
+    }
+
     // Función para abrir el modal de mensaje del sistema
     function openSystemMessageModal() {
         if (!currentChatId) {
@@ -1298,6 +1598,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const modal = document.getElementById('system-message-modal');
         const messageInput = document.getElementById('system-message-input');
         const saveBtn = document.getElementById('save-system-message-btn');
+
+        // Refrescar la lista de prompts guardados cada vez que se abre el modal
+        fetchSavedPrompts();
 
         // Si tenemos los datos del chat actual, usar el system message de ahí
         if (currentChatData && currentChatData.system_message !== undefined) {
@@ -1383,24 +1686,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const systemMessageBtn = document.getElementById('system-message-btn');
     systemMessageBtn.addEventListener('click', openSystemMessageModal);
 
-    // El botón de ver archivos ya está configurado arriba
-    // No necesitamos un segundo event listener para el mismo botón
-
-    // Función para cargar la versión de la aplicación
-    function loadAppVersion() {
-        fetch('/api/version')
-        .then(response => response.json())
-        .then(data => {
-            const versionElement = document.getElementById('app-version');
-            if (versionElement) {
-                versionElement.textContent = data.version;
-            }
-        })
-        .catch(error => console.error('Error loading app version:', error));
+    if (helpBtn) {
+        helpBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            window.open('/help', '_blank', 'noopener');
+        });
     }
-    
-    // Cargar versión de la aplicación
-    loadAppVersion();
     
     // Iniciar la aplicación (carga chats, modelos y archivos)
     initApp();

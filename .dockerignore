@@ -29,7 +29,7 @@ docker-compose.yml
 # Archivos de documentación
 README.md
 LICENSE
-*.md
+
 
 # Archivos de caché y logs
 *.log

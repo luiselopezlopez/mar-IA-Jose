@@ -12,12 +12,13 @@ from azure.core.credentials import AzureKeyCredential
 from openai import AzureOpenAI
 from werkzeug.utils import secure_filename
 import hashlib
+from sqlalchemy.exc import IntegrityError
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 from langchain_community.vectorstores import FAISS
 from langchain_openai import AzureOpenAIEmbeddings
 from dotenv import load_dotenv
-from models import db, User, Chat, Message, File
+from models import db, User, Chat, Message, File, UserPrompt
 from doc_export import procesar_respuesta  # Nuevo: exportación automática a Word
 
 # Utilidad para limpiar marcadores [WORD_DOC] del texto mostrado al usuario
@@ -161,6 +162,12 @@ logger.info(f"Carpeta de uploads configurada: {app.config['UPLOAD_FOLDER']}", "a
 
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # 64MB max upload
 logger.info(f"Tamaño máximo de upload configurado: {app.config['MAX_CONTENT_LENGTH'] / (1024 * 1024)}MB", "app.warmup")
+
+# Mensaje de sistema por defecto utilizado en toda la aplicación
+DEFAULT_SYSTEM_PROMPT = (
+    "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. "
+    "Si no sabes la respuesta, di que no lo sabes. No inventes respuestas."
+)
 
 # Modificar la URL de la base de datos para usar la ruta absoluta en INSTANCE_DIR
 database_path = os.path.abspath(os.path.join(INSTANCE_DIR, 'mar-ia-jose.db'))
@@ -349,6 +356,10 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
         preview = messages[0]['content'][:50] + '...' if messages else 'Chat vacío'
         title = preview
 
+    # Asegurar un título por defecto
+    if not title:
+        title = 'Nueva conversación'
+
     # Usar los file_hashes proporcionados o los de la sesión actual
     if file_hashes is None:
         file_hashes = session.get('file_hashes', [])
@@ -365,6 +376,33 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
     
     logger.info(f"Chat guardado: {title[:30]}... (ID: {chat_id})", "app.save_chat_history")
     return chat_id
+
+
+def create_new_chat_session(user_id, system_message=None, title=None):
+    """Crea un nuevo chat para el usuario asegurando valores por defecto consistentes."""
+    resolved_system_message = (system_message or '').strip()
+
+    if not resolved_system_message:
+        resolved_system_message = DEFAULT_SYSTEM_PROMPT
+        if current_user.is_authenticated:
+            user_default = UserPrompt.query.filter_by(user_id=current_user.id, name='Default').first()
+            if user_default and user_default.prompt_text:
+                resolved_system_message = user_default.prompt_text
+
+    resolved_title = (title or '').strip() or 'Nueva conversación'
+
+    chat_id = str(uuid.uuid4())
+    session['chat_id'] = chat_id
+    session['file_hashes'] = []
+
+    save_chat_history(user_id, [], resolved_system_message, resolved_title)
+
+    return {
+        "chat_id": chat_id,
+        "system_message": resolved_system_message,
+        "title": resolved_title
+    }
+
 
 def load_chat_history(user_id, chat_id=None):
     """Carga el historial de chat desde un archivo JSON"""
@@ -410,6 +448,77 @@ def get_user_chats(user_id):
     # Ordenar por timestamp, más reciente primero
     chats.sort(key=lambda x: x['timestamp'], reverse=True)
     return chats
+
+
+def ensure_default_user_prompt(user_id, commit=False):
+    """Garantiza que el usuario tenga un prompt 'Default'.
+
+    Args:
+        user_id (int): Identificador del usuario autenticado.
+        commit (bool): Si es True realiza commit inmediato tras crear el prompt.
+
+    Returns:
+        bool: True si se creó un nuevo prompt, False si ya existía o no se pudo crear.
+    """
+    if user_id is None:
+        return False
+
+    existing_prompt = UserPrompt.query.filter_by(user_id=user_id, name='Default').first()
+    if existing_prompt:
+        return False
+
+    default_prompt = UserPrompt(user_id=user_id, name='Default', prompt_text=DEFAULT_SYSTEM_PROMPT)
+    db.session.add(default_prompt)
+
+    if commit:
+        try:
+            db.session.commit()
+            logger.info(
+                f"Prompt 'Default' creado automáticamente para el usuario {user_id}",
+                "app.ensure_default_user_prompt"
+            )
+            return True
+        except IntegrityError:
+            db.session.rollback()
+            logger.warning(
+                f"Intento duplicado de crear prompt 'Default' para el usuario {user_id}",
+                "app.ensure_default_user_prompt"
+            )
+            return False
+
+    return True
+
+
+def backfill_missing_default_prompts():
+    """Crea el prompt 'Default' para usuarios existentes que aún no lo tienen."""
+    users = User.query.all()
+    created_count = 0
+
+    for user in users:
+        try:
+            created = ensure_default_user_prompt(user.id, commit=False)
+            if created:
+                created_count += 1
+        except Exception as exc:
+            db.session.rollback()
+            logger.error(
+                f"Error creando prompt 'Default' para usuario {user.id}: {exc}",
+                "app.backfill_missing_default_prompts"
+            )
+
+    if created_count:
+        try:
+            db.session.commit()
+            logger.info(
+                f"Se añadieron prompts 'Default' para {created_count} usuarios existentes",
+                "app.backfill_missing_default_prompts"
+            )
+        except IntegrityError as exc:
+            db.session.rollback()
+            logger.error(
+                f"Error al confirmar la creación de prompts 'Default' para usuarios existentes: {exc}",
+                "app.backfill_missing_default_prompts"
+            )
 
 def extract_images_from_pdf(file_path):
     """Extrae imágenes de un archivo PDF y realiza OCR o genera descripciones usando GPT-4o"""
@@ -677,12 +786,23 @@ def register():
             flash('El correo electrónico ya está registrado', 'error')
             return render_template('register.html', messages=get_flashed_messages(with_categories=True))
 
-        # Crear nuevo usuario
-        user = User(username=username, email=email)
-        user.set_password(password)
+        # Crear nuevo usuario y su prompt por defecto en una única transacción
+        try:
+            user = User(username=username, email=email)
+            user.set_password(password)
 
-        db.session.add(user)
-        db.session.commit()
+            db.session.add(user)
+            db.session.flush()  # Obtener ID antes del commit
+
+            ensure_default_user_prompt(user.id, commit=False)
+
+            db.session.commit()
+            logger.info(f"Usuario registrado correctamente: {username}", "app.register")
+        except Exception as exc:
+            db.session.rollback()
+            logger.error(f"Error al registrar usuario {username}: {exc}", "app.register")
+            flash('Ocurrió un error al completar el registro. Inténtalo nuevamente.', 'error')
+            return render_template('register.html', messages=get_flashed_messages(with_categories=True))
 
         flash('Registro exitoso. Ahora puedes iniciar sesión.', 'success')
         return redirect(url_for('login'))
@@ -839,7 +959,7 @@ def chat():
 Si la información no es suficiente para responder, utiliza tu conocimiento general pero indica que estás complementando con información que no está en los documentos."""
     # Si no hay mensaje personalizado ni contexto, usar el mensaje predeterminado
     elif not system_message:
-        system_message = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas."
+        system_message = DEFAULT_SYSTEM_PROMPT
     # Si hay mensaje personalizado y contexto, añadir el contexto al mensaje personalizado
     elif context:
         system_message = f"{system_message}\n\nAdemás, utiliza la siguiente información de los documentos para responder:\n\n{context}"
@@ -1238,20 +1358,15 @@ def new_chat():
         )
         logger.debug(f"Guardado estado del chat actual {current_chat_id} antes de crear uno nuevo", "app.new_chat")
     
-    # Crear nuevo chat con ID único
-    chat_id = str(uuid.uuid4())
-    session['chat_id'] = chat_id
-    
-    # Limpiar los file_hashes en la sesión para el nuevo chat
-    session['file_hashes'] = []
+    data = request.get_json(silent=True) or {}
 
-    # Obtener mensaje de sistema personalizado si se proporciona
-    data = request.json or {}
-    system_message = data.get('system_message')
-    title = data.get('title', 'Nueva conversación')
+    new_chat_info = create_new_chat_session(
+        user_id,
+        system_message=data.get('system_message'),
+        title=data.get('title')
+    )
 
-    save_chat_history(user_id, [], system_message, title)
-    return jsonify({"chat_id": chat_id})
+    return jsonify({"chat_id": new_chat_info["chat_id"]})
 
 @app.route('/api/files', methods=['GET'])
 def get_files():
@@ -1321,6 +1436,31 @@ def get_version():
         logger.error(f"Error al leer la versión: {str(e)}", "app.get_version")
         return jsonify({"version": "0.0.0"}), 500
 
+
+@app.route('/api/help/content', methods=['GET'])
+@login_required
+def get_help_content():
+    """Devuelve el contenido del archivo HELP.md para mostrar la ayuda."""
+    help_path = os.path.join(os.getcwd(), 'HELP.md')
+
+    try:
+        with open(help_path, 'r', encoding='utf-8') as fh:
+            content = fh.read()
+        return jsonify({"content": content})
+    except FileNotFoundError:
+        logger.error("Archivo HELP.md no encontrado", "app.get_help_content")
+        return jsonify({"error": "HELP no encontrado"}), 404
+    except Exception as exc:
+        logger.error(f"Error al leer HELP.md: {exc}", "app.get_help_content")
+        return jsonify({"error": "No se pudo cargar la ayuda"}), 500
+
+
+@app.route('/help', methods=['GET'])
+@login_required
+def help_page():
+    """Renderiza la página de ayuda en una nueva pestaña."""
+    return render_template('help.html')
+
 @app.route('/api/chat/<chat_id>', methods=['DELETE'])
 def delete_chat(chat_id):
     """Endpoint para eliminar un chat"""
@@ -1329,9 +1469,97 @@ def delete_chat(chat_id):
 
     if os.path.exists(filename):
         os.remove(filename)
+
+        if session.get('chat_id') == chat_id:
+            session.pop('chat_id', None)
+            session.pop('file_hashes', None)
+
+        remaining_chats = [
+            name for name in os.listdir(DATA_DIR)
+            if name.startswith(f"{user_id}_") and name.endswith('.json')
+        ]
+
+        if not remaining_chats:
+            new_chat_info = create_new_chat_session(user_id)
+            return jsonify({
+                "success": True,
+                "new_chat": new_chat_info
+            })
+
         return jsonify({"success": True})
 
     return jsonify({"error": "Chat no encontrado"}), 404
+
+
+@app.route('/api/user_prompts', methods=['GET'])
+@login_required
+def list_user_prompts():
+    """Devuelve los prompts guardados por el usuario autenticado."""
+    prompts = (
+        UserPrompt.query
+        .filter_by(user_id=current_user.id)
+        .order_by(UserPrompt.created_at.desc())
+        .all()
+    )
+
+    return jsonify({
+        "prompts": [
+            {
+                "id": prompt.id,
+                "name": prompt.name,
+                "prompt_text": prompt.prompt_text,
+                "created_at": prompt.created_at.isoformat()
+            }
+            for prompt in prompts
+        ]
+    })
+
+
+@app.route('/api/user_prompts', methods=['POST'])
+@login_required
+def create_user_prompt():
+    """Crea o actualiza un prompt guardado para el usuario actual."""
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    prompt_text = (data.get('prompt_text') or '').strip()
+
+    if not name:
+        return jsonify({"error": "El nombre del prompt es obligatorio."}), 400
+    if not prompt_text:
+        return jsonify({"error": "El contenido del prompt no puede estar vacío."}), 400
+
+    existing_prompt = UserPrompt.query.filter_by(user_id=current_user.id, name=name).first()
+
+    if existing_prompt:
+        existing_prompt.prompt_text = prompt_text
+        db.session.commit()
+        logger.info(f"Prompt '{name}' actualizado para el usuario {current_user.id}", "app.create_user_prompt")
+        return jsonify({
+            "success": True,
+            "updated": True,
+            "prompt": {
+                "id": existing_prompt.id,
+                "name": existing_prompt.name,
+                "prompt_text": existing_prompt.prompt_text,
+                "created_at": existing_prompt.created_at.isoformat()
+            }
+        }), 200
+
+    new_prompt = UserPrompt(user_id=current_user.id, name=name, prompt_text=prompt_text)
+    db.session.add(new_prompt)
+    db.session.commit()
+
+    logger.info(f"Prompt '{name}' creado para el usuario {current_user.id}", "app.create_user_prompt")
+    return jsonify({
+        "success": True,
+        "created": True,
+        "prompt": {
+            "id": new_prompt.id,
+            "name": new_prompt.name,
+            "prompt_text": new_prompt.prompt_text,
+            "created_at": new_prompt.created_at.isoformat()
+        }
+    }), 201
 
 @app.route('/api/chat/<chat_id>/system_message', methods=['PUT'])
 def update_system_message(chat_id):
@@ -1419,6 +1647,7 @@ def get_chat_files(chat_id):
 # Register a function to create tables with app context
 with app.app_context():
     db.create_all()
+    backfill_missing_default_prompts()
 
 @app.route('/chat-stream', methods=['POST'])
 @login_required
