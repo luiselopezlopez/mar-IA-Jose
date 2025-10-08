@@ -356,6 +356,10 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
         preview = messages[0]['content'][:50] + '...' if messages else 'Chat vacío'
         title = preview
 
+    # Asegurar un título por defecto
+    if not title:
+        title = 'Nueva conversación'
+
     # Usar los file_hashes proporcionados o los de la sesión actual
     if file_hashes is None:
         file_hashes = session.get('file_hashes', [])
@@ -372,6 +376,33 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
     
     logger.info(f"Chat guardado: {title[:30]}... (ID: {chat_id})", "app.save_chat_history")
     return chat_id
+
+
+def create_new_chat_session(user_id, system_message=None, title=None):
+    """Crea un nuevo chat para el usuario asegurando valores por defecto consistentes."""
+    resolved_system_message = (system_message or '').strip()
+
+    if not resolved_system_message:
+        resolved_system_message = DEFAULT_SYSTEM_PROMPT
+        if current_user.is_authenticated:
+            user_default = UserPrompt.query.filter_by(user_id=current_user.id, name='Default').first()
+            if user_default and user_default.prompt_text:
+                resolved_system_message = user_default.prompt_text
+
+    resolved_title = (title or '').strip() or 'Nueva conversación'
+
+    chat_id = str(uuid.uuid4())
+    session['chat_id'] = chat_id
+    session['file_hashes'] = []
+
+    save_chat_history(user_id, [], resolved_system_message, resolved_title)
+
+    return {
+        "chat_id": chat_id,
+        "system_message": resolved_system_message,
+        "title": resolved_title
+    }
+
 
 def load_chat_history(user_id, chat_id=None):
     """Carga el historial de chat desde un archivo JSON"""
@@ -1312,13 +1343,6 @@ def new_chat():
     """Endpoint para crear un nuevo chat"""
     user_id = get_user_id()
     
-    # Determinar el mensaje de sistema por defecto del usuario.
-    default_prompt = DEFAULT_SYSTEM_PROMPT
-    if current_user.is_authenticated:
-        user_default = UserPrompt.query.filter_by(user_id=current_user.id, name='Default').first()
-        if user_default and user_default.prompt_text:
-            default_prompt = user_default.prompt_text
-
     # Guardar el estado actual del chat antes de crear uno nuevo
     current_chat_id = session.get('chat_id')
     if current_chat_id:
@@ -1334,20 +1358,15 @@ def new_chat():
         )
         logger.debug(f"Guardado estado del chat actual {current_chat_id} antes de crear uno nuevo", "app.new_chat")
     
-    # Crear nuevo chat con ID único
-    chat_id = str(uuid.uuid4())
-    session['chat_id'] = chat_id
-    
-    # Limpiar los file_hashes en la sesión para el nuevo chat
-    session['file_hashes'] = []
+    data = request.get_json(silent=True) or {}
 
-    # Obtener mensaje de sistema personalizado si se proporciona
-    data = request.json or {}
-    system_message = data.get('system_message') or default_prompt
-    title = data.get('title', 'Nueva conversación')
+    new_chat_info = create_new_chat_session(
+        user_id,
+        system_message=data.get('system_message'),
+        title=data.get('title')
+    )
 
-    save_chat_history(user_id, [], system_message, title)
-    return jsonify({"chat_id": chat_id})
+    return jsonify({"chat_id": new_chat_info["chat_id"]})
 
 @app.route('/api/files', methods=['GET'])
 def get_files():
@@ -1425,6 +1444,23 @@ def delete_chat(chat_id):
 
     if os.path.exists(filename):
         os.remove(filename)
+
+        if session.get('chat_id') == chat_id:
+            session.pop('chat_id', None)
+            session.pop('file_hashes', None)
+
+        remaining_chats = [
+            name for name in os.listdir(DATA_DIR)
+            if name.startswith(f"{user_id}_") and name.endswith('.json')
+        ]
+
+        if not remaining_chats:
+            new_chat_info = create_new_chat_session(user_id)
+            return jsonify({
+                "success": True,
+                "new_chat": new_chat_info
+            })
+
         return jsonify({"success": True})
 
     return jsonify({"error": "Chat no encontrado"}), 404

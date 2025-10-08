@@ -1331,8 +1331,25 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    // Si el chat eliminado es el actual, limpiar la vista
-                    if (chatId === currentChatId) {
+                    const systemMessageInput = document.getElementById('system-message-input');
+
+                    if (data.new_chat) {
+                        currentChatId = data.new_chat.chat_id;
+
+                        if (systemMessageInput) {
+                            systemMessageInput.value = data.new_chat.system_message || '';
+                        }
+
+                        currentChatData = {
+                            messages: [],
+                            system_message: data.new_chat.system_message || ''
+                        };
+
+                        clearChatMessages();
+                        clearChatInputState();
+                        showWelcomeMessage();
+                    } else if (chatId === currentChatId) {
+                        // Si el chat eliminado es el actual y aún quedan otros, limpiar vista
                         currentChatId = null;
                         clearChatMessages();
                     }
