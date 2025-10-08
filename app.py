@@ -861,6 +861,7 @@ def index():
     user_id = get_user_id()
     chats = get_user_chats(user_id)
     is_admin = bool(getattr(current_user, 'is_admin', False))
+    app_version, _ = read_app_version()
     logger.debug(
         f"Renderizando index para usuario {getattr(current_user, 'username', 'desconocido')} (ID: {user_id}) con permisos admin={is_admin}",
         "app.index"
@@ -891,7 +892,7 @@ def index():
         # Actualizar la lista de chats
         chats = get_user_chats(user_id)
 
-    return render_template('index.html', chats=chats, is_admin=is_admin)
+    return render_template('index.html', chats=chats, is_admin=is_admin, app_version=app_version)
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
@@ -1466,16 +1467,28 @@ def delete_file(file_hash):
 
     return jsonify({"error": "Archivo no encontrado"}), 404
             
+def read_app_version(default="0.0.0"):
+    """Lee la versión de la aplicación desde el archivo version.txt."""
+    version_path = os.path.join(os.getcwd(), 'version.txt')
+    try:
+        with open(version_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+            if content:
+                return content, True
+            logger.warning("Archivo version.txt vacío", "app.read_app_version")
+    except FileNotFoundError:
+        logger.warning("Archivo version.txt no encontrado", "app.read_app_version")
+    except Exception as exc:
+        logger.error(f"Error al leer version.txt: {exc}", "app.read_app_version")
+    return default, False
+
+
 @app.route('/api/version', methods=['GET'])
 def get_version():
     """Endpoint para obtener la versión de la aplicación"""
-    try:
-        with open('version.txt', 'r') as f:
-            version = f.read().strip()
-        return jsonify({"version": version})
-    except Exception as e:
-        logger.error(f"Error al leer la versión: {str(e)}", "app.get_version")
-        return jsonify({"version": "0.0.0"}), 500
+    version, success = read_app_version()
+    status_code = 200 if success else 500
+    return jsonify({"version": version}), status_code
 
 
 @app.route('/api/help/content', methods=['GET'])

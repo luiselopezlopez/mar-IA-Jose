@@ -1,6 +1,7 @@
 $tenantId="cce992e5-26d0-46df-8591-bdd15d5ef494"
 $acrName="mariajose"
 $version=Get-Date -Format 'yyyyMMddHHmm'
+echo $version > version.txt
 
 $containerName="mar-ia-jose"
 $repository=

@@ -270,8 +270,28 @@ body {
 }
 
 
-.help-btn {
+.toolbar-version {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+    color: #555;
+    font-weight: 500;
+}
+
+.toolbar-version-label {
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.toolbar-version-value {
+    font-family: 'Fira Code', 'Fira Mono', Consolas, 'Courier New', monospace;
+    font-weight: 600;
+}
+
+.help-btn {
+    margin-left: 8px;
     font-weight: 600;
 }
 
@@ -295,6 +315,10 @@ body.dark-mode .toolbar-btn {
 body.dark-mode .bottom-toolbar {
     background-color: #1e1e1e;
     border-color: #333;
+}
+
+body.dark-mode .toolbar-version {
+    color: #cbd5f5;
 }
 
 body.dark-mode .user-menu-dropdown {
