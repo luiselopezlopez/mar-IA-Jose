@@ -42,7 +42,7 @@ body {
     background-color: #005a9e;
 }
 
-.logout-btn, .user-header .theme-toggle {
+.logout-btn, .user-header .theme-toggle, .user-menu-toggle {
     background: none;
     color: white;
     border: none;
@@ -57,7 +57,7 @@ body {
     transition: background-color 0.2s, color 0.2s;
 }
 
-.logout-btn:hover, .user-header .theme-toggle:hover {
+.logout-btn:hover, .user-header .theme-toggle:hover, .user-menu-toggle:hover {
     background-color: rgba(255, 255, 255, 0.2);
     color: white;
 }
@@ -297,6 +297,44 @@ body.dark-mode .bottom-toolbar {
     border-color: #333;
 }
 
+body.dark-mode .user-menu-dropdown {
+    background: #1f2937;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.55);
+}
+
+body.dark-mode .user-menu-item {
+    color: #e5e7eb;
+}
+
+body.dark-mode .user-menu-item:hover,
+body.dark-mode .user-menu-item:focus {
+    background-color: rgba(59, 130, 246, 0.25);
+    color: #bfdbfe;
+}
+
+body.dark-mode .change-password-form input {
+    background: #111827;
+    border-color: #374151;
+    color: #f9fafb;
+}
+
+body.dark-mode .change-password-form input:focus {
+    outline-color: rgba(59, 130, 246, 0.45);
+    border-color: #60a5fa;
+}
+
+body.dark-mode .change-password-feedback {
+    color: #60a5fa;
+}
+
+body.dark-mode .change-password-feedback.error {
+    color: #f87171;
+}
+
+body.dark-mode .change-password-feedback.success {
+    color: #34d399;
+}
+
 /* Estilos para imágenes adjuntas */
 .chat-input-images {
     display: flex;
@@ -513,6 +551,12 @@ body.dark-mode .bottom-toolbar {
     flex-direction: column;
 }
 
+.modal-content.modal-wide {
+    width: clamp(80vw, 85vw, 90vw);
+    min-height: 80vh;
+    max-height: 90vh;
+}
+
 .modal-header {
     padding: 15px;
     border-bottom: 1px solid #ddd;
@@ -531,11 +575,147 @@ body.dark-mode .bottom-toolbar {
     border-bottom: 1px solid #ddd;
     background-color: #0078d4;
     color: white;
+    position: relative;
+    gap: 12px;
+}
+
+.user-identity {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.user-menu {
+    position: relative;
+}
+
+.user-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.user-menu-toggle:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+.user-menu-toggle[aria-expanded="true"] {
+    transform: rotate(90deg);
+}
+
+.user-menu-dropdown {
+    position: absolute;
+    top: 110%;
+    left: 0;
+    min-width: 200px;
+    background: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.25);
+    padding: 8px 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    z-index: 1200;
+}
+
+.user-menu-dropdown.open {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.user-menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: #1f2933;
+    font-size: 0.95rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.user-menu-item i {
+    font-size: 1rem;
+    color: inherit;
+}
+
+.user-menu-item:hover,
+.user-menu-item:focus {
+    background-color: rgba(0, 120, 212, 0.12);
+    color: #0b5ca8;
+    outline: none;
 }
 
 .username {
     font-weight: bold;
     font-size: 16px;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.change-password-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.change-password-form label {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.change-password-form input {
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    font-size: 1rem;
+}
+
+.change-password-form input:focus {
+    outline: 2px solid rgba(0, 120, 212, 0.35);
+    border-color: #0078d4;
+}
+
+.change-password-feedback {
+    min-height: 20px;
+    font-size: 0.9rem;
+    color: #0078d4;
+}
+
+.change-password-feedback.error {
+    color: #d93025;
+}
+
+.change-password-feedback.success {
+    color: #1b873f;
 }
 
 .modal-header h3 {
@@ -554,12 +734,250 @@ body.dark-mode .bottom-toolbar {
     flex-grow: 1;
 }
 
+.modal-content.modal-wide .modal-body {
+    padding: 20px;
+    overflow-y: auto;
+}
+
 .modal-footer {
     padding: 15px;
     border-top: 1px solid #ddd;
     display: flex;
     justify-content: flex-end;
     gap: 10px;
+}
+
+.manage-users-description {
+    margin: 0 0 12px;
+    color: #475569;
+    font-size: 0.95rem;
+}
+
+.manage-users-feedback {
+    min-height: 20px;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+    color: #0078d4;
+}
+
+.manage-users-feedback.error,
+.admin-reset-password-feedback.error {
+    color: #d93025;
+}
+
+.manage-users-feedback.success,
+.admin-reset-password-feedback.success {
+    color: #1b873f;
+}
+
+.manage-users-table-wrapper {
+    max-height: clamp(320px, 60vh, 70vh);
+    overflow-y: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+}
+
+.manage-users-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+
+.manage-users-col-user {
+    width: clamp(180px, 22vw, 28%);
+}
+
+.manage-users-col-role {
+    width: clamp(160px, 18vw, 22%);
+}
+
+.manage-users-col-email {
+    width: clamp(200px, 26vw, 30%);
+}
+
+.manage-users-col-created {
+    width: clamp(160px, 16vw, 20%);
+}
+
+.manage-users-col-actions {
+    width: clamp(210px, 18vw, 24%);
+}
+
+.manage-users-table th,
+.manage-users-table td {
+    padding: 12px;
+    border-bottom: 1px solid #e2e8f0;
+    text-align: left;
+    vertical-align: middle;
+}
+
+.manage-users-table th {
+    background-color: #f1f5f9;
+    font-weight: 600;
+    color: #1f2937;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.manage-users-table tbody tr:hover {
+    background-color: #f8fafc;
+}
+
+.manage-users-empty {
+    text-align: center;
+    padding: 24px 12px;
+    color: #64748b;
+    font-style: italic;
+}
+
+.manage-users-meta {
+    margin-top: 4px;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.manage-users-role {
+    min-width: 160px;
+}
+
+.admin-role-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #1f2937;
+}
+
+.admin-role-toggle.disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.admin-role-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: #0078d4;
+}
+
+.admin-role-checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.admin-role-status {
+    font-size: 0.95rem;
+    color: #1f2937;
+}
+
+.manage-users-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: flex-end;
+    white-space: nowrap;
+}
+
+.manage-users-actions .secondary-btn,
+.manage-users-actions .danger-btn {
+    flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+    .manage-users-col-user,
+    .manage-users-col-role,
+    .manage-users-col-email,
+    .manage-users-col-created,
+    .manage-users-col-actions {
+        width: auto;
+    }
+
+    .manage-users-actions {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+}
+
+.manage-users-actions-header {
+    width: 180px;
+}
+
+.admin-reset-password {
+    margin-top: 24px;
+    padding: 16px;
+    border-radius: 8px;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+}
+
+.admin-reset-password.active {
+    animation: fadeInUp 0.2s ease;
+}
+
+.admin-reset-password-target {
+    margin: 0;
+    color: #1f2937;
+}
+
+.admin-reset-password-form {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.admin-reset-password-form label {
+    font-weight: 600;
+}
+
+.admin-reset-password-form input {
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    font-size: 1rem;
+}
+
+.admin-reset-password-form input:focus {
+    outline: 2px solid rgba(0, 120, 212, 0.35);
+    border-color: #0078d4;
+}
+
+.admin-reset-password-feedback {
+    min-height: 18px;
+    font-size: 0.9rem;
+    color: #0078d4;
+}
+
+.admin-reset-password-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.danger-btn {
+    background-color: #d93025;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.danger-btn:hover:not(:disabled),
+.danger-btn:focus-visible {
+    background-color: #b11f17;
+    box-shadow: 0 0 0 3px rgba(217, 48, 37, 0.25);
+}
+
+.danger-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    box-shadow: none;
 }
 
 #system-message-input {
@@ -741,6 +1159,101 @@ body.dark-mode .cancel-btn {
     background-color: #333;
     border-color: #444;
     color: #e0e0e0;
+}
+
+body.dark-mode .manage-users-description {
+    color: #cbd5f5;
+}
+
+body.dark-mode .manage-users-feedback,
+body.dark-mode .admin-reset-password-feedback {
+    color: #38bdf8;
+}
+
+body.dark-mode .manage-users-feedback.error,
+body.dark-mode .admin-reset-password-feedback.error {
+    color: #f87171;
+}
+
+body.dark-mode .manage-users-feedback.success,
+body.dark-mode .admin-reset-password-feedback.success {
+    color: #34d399;
+}
+
+body.dark-mode .manage-users-table-wrapper {
+    border-color: #334155;
+    background-color: #0f172a;
+}
+
+body.dark-mode .manage-users-table th {
+    background-color: #1e293b;
+    color: #e2e8f0;
+    border-bottom: 1px solid #334155;
+}
+
+body.dark-mode .manage-users-table td {
+    border-bottom: 1px solid #1f2937;
+}
+
+body.dark-mode .manage-users-table tbody tr:hover {
+    background-color: #1e293b;
+}
+
+body.dark-mode .manage-users-empty,
+body.dark-mode .manage-users-meta {
+    color: #94a3b8;
+}
+
+body.dark-mode .admin-role-toggle {
+    color: #e2e8f0;
+}
+
+body.dark-mode .admin-role-toggle.disabled {
+    opacity: 0.8;
+}
+
+body.dark-mode .admin-role-status {
+    color: #e2e8f0;
+}
+
+body.dark-mode .admin-role-checkbox {
+    accent-color: #38bdf8;
+}
+
+body.dark-mode .admin-reset-password {
+    background-color: #1e293b;
+    border-color: #334155;
+}
+
+body.dark-mode .admin-reset-password-target {
+    color: #e2e8f0;
+}
+
+body.dark-mode .admin-reset-password-form input {
+    background-color: #0f172a;
+    color: #e2e8f0;
+    border-color: #334155;
+}
+
+body.dark-mode .admin-reset-password-form input:focus {
+    border-color: #38bdf8;
+    outline-color: rgba(56, 189, 248, 0.35);
+}
+
+body.dark-mode .danger-btn {
+    background-color: #f87171;
+    color: #0f172a;
+}
+
+body.dark-mode .danger-btn:hover:not(:disabled),
+body.dark-mode .danger-btn:focus-visible {
+    background-color: #ef4444;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25);
+}
+
+body.dark-mode .danger-btn:disabled {
+    color: #0f172a;
+    opacity: 0.5;
 }
 
 /* Añadir estos estilos al archivo CSS existente */

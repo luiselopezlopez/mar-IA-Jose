@@ -11,6 +11,7 @@ class User(db.Model, UserMixin):
     username = db.Column(db.String(64), unique=True, index=True)
     email = db.Column(db.String(120), unique=True, index=True)
     password_hash = db.Column(db.String(128))
+    user_type = db.Column(db.Integer, nullable=False, default=1, server_default='1')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def set_password(self, password):
@@ -20,6 +21,16 @@ class User(db.Model, UserMixin):
     def check_password(self, password):
         """Check password against hash"""
         return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_admin(self) -> bool:
+        """Return True if the user has administrator privileges."""
+        try:
+            if self.user_type is None:
+                return False
+            return int(self.user_type) == 0
+        except (TypeError, ValueError):  # Fallback for unexpected values
+            return False
     
     def __repr__(self):
         return f'<User {self.username}>'
