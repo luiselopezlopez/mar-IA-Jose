@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatList = document.querySelector('.chat-list');
     const modelSelect = document.getElementById('model-select');
     const cameraBtn = document.getElementById('camera-btn');
+    const helpBtn = document.getElementById('help-btn');
     const DEFAULT_SYSTEM_PROMPT_TEXT = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas.";
     const savedPromptsSelect = document.getElementById('saved-prompts-select');
     const storeSystemPromptBtn = document.getElementById('store-system-prompt-btn');
@@ -1685,24 +1686,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const systemMessageBtn = document.getElementById('system-message-btn');
     systemMessageBtn.addEventListener('click', openSystemMessageModal);
 
-    // El botón de ver archivos ya está configurado arriba
-    // No necesitamos un segundo event listener para el mismo botón
-
-    // Función para cargar la versión de la aplicación
-    function loadAppVersion() {
-        fetch('/api/version')
-        .then(response => response.json())
-        .then(data => {
-            const versionElement = document.getElementById('app-version');
-            if (versionElement) {
-                versionElement.textContent = data.version;
-            }
-        })
-        .catch(error => console.error('Error loading app version:', error));
+    if (helpBtn) {
+        helpBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            window.open('/help', '_blank', 'noopener');
+        });
     }
-    
-    // Cargar versión de la aplicación
-    loadAppVersion();
     
     // Iniciar la aplicación (carga chats, modelos y archivos)
     initApp();

@@ -269,17 +269,20 @@ body {
     background-color: #e0e0e0;
 }
 
-.version-info {
-    padding: 5px 10px;
-    font-size: 0.9em;
-    color: #666;
+
+.help-btn {
     margin-left: auto;
-    display: flex;
-    align-items: center;
+    font-weight: 600;
 }
 
-body.dark-mode .version-info {
-    color: #aaa;
+.help-btn i {
+    font-size: 1.1em;
+}
+
+.help-error {
+    color: #d93025;
+    font-weight: 600;
+    margin-top: 15px;
 }
 
 body.dark-mode .system-message-btn,

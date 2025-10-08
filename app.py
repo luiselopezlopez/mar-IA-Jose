@@ -1436,6 +1436,31 @@ def get_version():
         logger.error(f"Error al leer la versión: {str(e)}", "app.get_version")
         return jsonify({"version": "0.0.0"}), 500
 
+
+@app.route('/api/help/content', methods=['GET'])
+@login_required
+def get_help_content():
+    """Devuelve el contenido del archivo HELP.md para mostrar la ayuda."""
+    help_path = os.path.join(os.getcwd(), 'HELP.md')
+
+    try:
+        with open(help_path, 'r', encoding='utf-8') as fh:
+            content = fh.read()
+        return jsonify({"content": content})
+    except FileNotFoundError:
+        logger.error("Archivo HELP.md no encontrado", "app.get_help_content")
+        return jsonify({"error": "HELP no encontrado"}), 404
+    except Exception as exc:
+        logger.error(f"Error al leer HELP.md: {exc}", "app.get_help_content")
+        return jsonify({"error": "No se pudo cargar la ayuda"}), 500
+
+
+@app.route('/help', methods=['GET'])
+@login_required
+def help_page():
+    """Renderiza la página de ayuda en una nueva pestaña."""
+    return render_template('help.html')
+
 @app.route('/api/chat/<chat_id>', methods=['DELETE'])
 def delete_chat(chat_id):
     """Endpoint para eliminar un chat"""

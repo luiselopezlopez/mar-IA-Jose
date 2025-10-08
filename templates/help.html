@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ayuda | Mar-IA-Jose</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dark-mode.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/markdown.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body {
+            background-color: #f5f5f5;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .help-wrapper {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 40px 20px 60px;
+        }
+        .help-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+        .help-header h1 {
+            margin: 0;
+            color: #0078d4;
+        }
+        .help-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .help-actions button {
+            padding: 8px 14px;
+            border-radius: 6px;
+            border: 1px solid #0078d4;
+            background-color: #0078d4;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+        .help-actions button.secondary {
+            background-color: transparent;
+            color: #0078d4;
+        }
+        .help-actions button:hover {
+            background-color: #005a9e;
+            color: #fff;
+        }
+        .help-actions button.secondary:hover {
+            background-color: rgba(0, 120, 212, 0.1);
+        }
+        .help-content-area {
+            background-color: transparent;
+            box-shadow: none;
+            padding: 0;
+            min-height: 60vh;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .help-content-area.loading,
+        .help-content-area.error {
+            background-color: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
+            padding: 30px;
+            color: #444;
+        }
+        .help-content-area.loading {
+            justify-content: center;
+            align-items: center;
+            font-style: italic;
+        }
+        .help-content-area.error {
+            color: #b71c1c;
+        }
+        .help-content-area.segmented {
+            min-height: unset;
+        }
+        .help-section {
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+            padding: 26px 32px;
+            color: #1f2933;
+            line-height: 1.65;
+        }
+        .help-section + .help-section {
+            margin-top: 0;
+        }
+        .help-section h2 {
+            margin-top: 0;
+            color: #0b5ca8;
+        }
+        .help-section p {
+            margin-bottom: 1.1rem;
+        }
+        .help-section p:last-child,
+        .help-section ul:last-child,
+        .help-section ol:last-child,
+        .help-section pre:last-child {
+            margin-bottom: 0;
+        }
+        .help-section ul,
+        .help-section ol {
+            margin-left: 1.2rem;
+        }
+        .help-section li:not(:last-child) {
+            margin-bottom: 0.4rem;
+        }
+        .help-section code {
+            background: #f1f4f9;
+            border-radius: 6px;
+            padding: 0.15em 0.45em;
+            font-size: 0.95em;
+        }
+        .help-section pre {
+            background: #f5f7fb;
+            border-radius: 10px;
+            padding: 18px 22px;
+            overflow-x: auto;
+        }
+        .help-section pre code {
+            background: transparent;
+            padding: 0;
+        }
+        .help-intro {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            font-size: 1.05rem;
+            background: linear-gradient(135deg, rgba(0, 120, 212, 0.1), rgba(15, 23, 42, 0.08));
+            border: 1px solid rgba(0, 120, 212, 0.18);
+        }
+        .help-intro p {
+            margin: 0;
+        }
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #0e1117;
+                color: #e8eaed;
+            }
+            .help-content-area.loading,
+            .help-content-area.error {
+                background-color: #111827;
+                color: #e8eaed;
+                box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+            }
+            .help-section {
+                background-color: #ffffff;
+                color: #1b1e23;
+                box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+            }
+            .help-section code {
+                background: #f0f3f9;
+                color: #111827;
+            }
+            .help-section pre {
+                background: #eef2f9;
+            }
+            .help-intro {
+                background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(30, 64, 175, 0.25));
+                border-color: rgba(59, 130, 246, 0.35);
+                color: #e8eaed;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="help-wrapper">
+        <div class="help-header">
+            <h1>Guía de Uso de Mar-IA-Jose</h1>
+            <div class="help-actions">
+                <button type="button" onclick="window.print()">Imprimir</button>
+                <button type="button" class="secondary" onclick="window.close()">Cerrar</button>
+            </div>
+        </div>
+        <div id="help-content" class="help-content-area loading">
+            Cargando documentación de ayuda...
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            const contentEl = document.getElementById('help-content');
+
+            function renderMarkdown(markdownText) {
+                if (window.marked) {
+                    const parser = typeof window.marked.parse === 'function'
+                        ? window.marked.parse.bind(window.marked)
+                        : window.marked;
+                    contentEl.innerHTML = parser(markdownText);
+                } else {
+                    contentEl.textContent = markdownText;
+                }
+                contentEl.classList.remove('loading', 'error');
+                segmentSections();
+            }
+
+            function showError(message) {
+                contentEl.classList.remove('loading');
+                contentEl.classList.add('error');
+                contentEl.textContent = message;
+            }
+
+            function segmentSections() {
+                const root = contentEl;
+
+                const firstHeading = root.querySelector('h1');
+                if (firstHeading) {
+                    firstHeading.remove();
+                }
+
+                root.querySelectorAll('hr').forEach(hr => hr.remove());
+
+                if (!root.querySelector('.help-intro')) {
+                    const firstH2 = root.querySelector('h2');
+                    if (firstH2) {
+                        const introSection = document.createElement('section');
+                        introSection.className = 'help-section help-intro';
+                        let node = root.firstChild;
+                        let movedSomething = false;
+
+                        while (node && node !== firstH2) {
+                            const next = node.nextSibling;
+                            if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) {
+                                root.removeChild(node);
+                            } else {
+                                introSection.appendChild(node);
+                                movedSomething = true;
+                            }
+                            node = next;
+                        }
+
+                        if (movedSomething) {
+                            root.insertBefore(introSection, firstH2);
+                        }
+                    }
+                }
+
+                const headings = Array.from(root.querySelectorAll('h2'));
+                headings.forEach(heading => {
+                    if (heading.closest('.help-section')) {
+                        return;
+                    }
+
+                    const section = document.createElement('section');
+                    section.className = 'help-section';
+                    const parent = heading.parentNode;
+                    parent.insertBefore(section, heading);
+
+                    let node = heading;
+                    while (node) {
+                        const next = node.nextSibling;
+                        section.appendChild(node);
+                        if (!next) {
+                            break;
+                        }
+                        if (next.nodeType === Node.ELEMENT_NODE && next.tagName === 'H2') {
+                            break;
+                        }
+                        node = next;
+                    }
+                });
+
+                root.classList.add('segmented');
+            }
+
+            fetch("{{ url_for('get_help_content') }}")
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Error al cargar la documentación (HTTP ' + response.status + ').');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data || !data.content) {
+                        throw new Error('La documentación de ayuda está vacía.');
+                    }
+                    renderMarkdown(data.content);
+                })
+                .catch(error => {
+                    console.error('Error cargando la ayuda:', error);
+                    showError(error.message || 'No se pudo cargar la documentación de ayuda.');
+                });
+        })();
+    </script>
+</body>
+</html>
