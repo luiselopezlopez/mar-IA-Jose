@@ -26,7 +26,9 @@ class User(db.Model, UserMixin):
     def is_admin(self) -> bool:
         """Return True if the user has administrator privileges."""
         try:
-            return int(self.user_type or 1) == 0
+            if self.user_type is None:
+                return False
+            return int(self.user_type) == 0
         except (TypeError, ValueError):  # Fallback for unexpected values
             return False
     

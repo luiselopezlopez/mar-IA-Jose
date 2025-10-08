@@ -12,6 +12,7 @@ from azure.core.credentials import AzureKeyCredential
 from openai import AzureOpenAI
 from werkzeug.utils import secure_filename
 import hashlib
+import shutil
 from sqlalchemy import text, inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -859,6 +860,11 @@ def index():
 
     user_id = get_user_id()
     chats = get_user_chats(user_id)
+    is_admin = bool(getattr(current_user, 'is_admin', False))
+    logger.debug(
+        f"Renderizando index para usuario {getattr(current_user, 'username', 'desconocido')} (ID: {user_id}) con permisos admin={is_admin}",
+        "app.index"
+    )
     
     # Determinar el chat que se abrirá automáticamente
     if chats:
@@ -885,7 +891,7 @@ def index():
         # Actualizar la lista de chats
         chats = get_user_chats(user_id)
 
-    return render_template('index.html', chats=chats)
+    return render_template('index.html', chats=chats, is_admin=is_admin)
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
@@ -1550,6 +1556,299 @@ def change_password():
         return jsonify({
             "success": False,
             "error": "No se pudo actualizar la contraseña. Inténtalo nuevamente."
+        }), 500
+
+
+@app.route('/api/admin/users', methods=['GET'])
+@login_required
+def admin_list_users():
+    """Devuelve la lista de usuarios para administración."""
+    if not current_user.is_admin:
+        logger.warning(
+            f"Intento de listar usuarios sin privilegios por parte del usuario {current_user.id}",
+            "app.admin_list_users"
+        )
+        return jsonify({
+            "success": False,
+            "error": "No tienes permisos para realizar esta acción."
+        }), 403
+
+    users = User.query.order_by(User.created_at.asc()).all()
+    total_admins = sum(1 for user in users if user.is_admin)
+
+    return jsonify({
+        "success": True,
+        "total_admins": total_admins,
+        "users": [{
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_admin": user.is_admin,
+            "is_self": user.id == current_user.id,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        } for user in users]
+    })
+
+
+@app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
+@login_required
+def admin_reset_user_password(user_id):
+    """Permite a un administrador restablecer la contraseña de otro usuario."""
+    if not current_user.is_admin:
+        logger.warning(
+            f"Intento de resetear contraseña sin privilegios por parte del usuario {current_user.id}",
+            "app.admin_reset_user_password"
+        )
+        return jsonify({
+            "success": False,
+            "error": "No tienes permisos para realizar esta acción."
+        }), 403
+
+    target_user = db.session.get(User, user_id)
+    if not target_user:
+        return jsonify({
+            "success": False,
+            "error": "Usuario no encontrado."
+        }), 404
+
+    if target_user.id == current_user.id:
+        return jsonify({
+            "success": False,
+            "error": "Utiliza tu propio formulario para actualizar tu contraseña."
+        }), 400
+
+    data = request.get_json(silent=True) or {}
+    new_password = (data.get('new_password') or '').strip()
+
+    if not new_password:
+        return jsonify({
+            "success": False,
+            "error": "La nueva contraseña es obligatoria."
+        }), 400
+
+    if len(new_password) < 8:
+        return jsonify({
+            "success": False,
+            "error": "La nueva contraseña debe tener al menos 8 caracteres."
+        }), 400
+
+    try:
+        target_user.set_password(new_password)
+        db.session.commit()
+        logger.info(
+            f"Contraseña restablecida para el usuario {target_user.id} por admin {current_user.id}",
+            "app.admin_reset_user_password"
+        )
+        return jsonify({"success": True})
+    except Exception as exc:
+        db.session.rollback()
+        logger.error(
+            f"Error al restablecer la contraseña del usuario {user_id}: {exc}",
+            "app.admin_reset_user_password"
+        )
+        return jsonify({
+            "success": False,
+            "error": "No se pudo restablecer la contraseña. Inténtalo nuevamente."
+        }), 500
+
+
+@app.route('/api/admin/users/<int:user_id>/role', methods=['PATCH'])
+@login_required
+def admin_update_user_role(user_id):
+    """Permite otorgar o revocar privilegios de administrador."""
+    if not current_user.is_admin:
+        logger.warning(
+            f"Intento de actualizar rol sin privilegios por parte del usuario {current_user.id}",
+            "app.admin_update_user_role"
+        )
+        return jsonify({
+            "success": False,
+            "error": "No tienes permisos para realizar esta acción."
+        }), 403
+
+    target_user = db.session.get(User, user_id)
+    if not target_user:
+        return jsonify({
+            "success": False,
+            "error": "Usuario no encontrado."
+        }), 404
+
+    data = request.get_json(silent=True) or {}
+
+    if 'is_admin' not in data:
+        return jsonify({
+            "success": False,
+            "error": "El valor 'is_admin' es obligatorio."
+        }), 400
+
+    raw_value = data.get('is_admin')
+
+    try:
+        if isinstance(raw_value, bool):
+            desired_admin = raw_value
+        elif isinstance(raw_value, str):
+            normalized = raw_value.strip().lower()
+            if normalized in {'true', '1', 'yes', 'on'}:
+                desired_admin = True
+            elif normalized in {'false', '0', 'no', 'off'}:
+                desired_admin = False
+            else:
+                raise ValueError("Valor de cadena inválido")
+        elif isinstance(raw_value, (int, float)):
+            desired_admin = bool(raw_value)
+        else:
+            raise ValueError("Tipo de dato inválido")
+    except ValueError:
+        return jsonify({
+            "success": False,
+            "error": "El valor 'is_admin' debe ser booleano."
+        }), 400
+
+    if target_user.is_admin and not desired_admin:
+        remaining_admins = User.query.filter(User.user_type == 0, User.id != user_id).count()
+        if remaining_admins == 0:
+            return jsonify({
+                "success": False,
+                "error": "Debe existir al menos un administrador en el sistema."
+            }), 400
+
+    if target_user.is_admin == desired_admin:
+        total_admins = User.query.filter(User.user_type == 0).count()
+        return jsonify({
+            "success": True,
+            "unchanged": True,
+            "total_admins": total_admins,
+            "user": {
+                "id": target_user.id,
+                "username": target_user.username,
+                "is_admin": target_user.is_admin,
+                "is_self": target_user.id == current_user.id
+            }
+        })
+
+    try:
+        target_user.user_type = 0 if desired_admin else 1
+        db.session.commit()
+        total_admins = User.query.filter(User.user_type == 0).count()
+        logger.info(
+            f"Rol actualizado para usuario {target_user.id} por admin {current_user.id}. Admin={desired_admin}",
+            "app.admin_update_user_role"
+        )
+        return jsonify({
+            "success": True,
+            "total_admins": total_admins,
+            "user": {
+                "id": target_user.id,
+                "username": target_user.username,
+                "is_admin": target_user.is_admin,
+                "is_self": target_user.id == current_user.id
+            }
+        })
+    except Exception as exc:
+        db.session.rollback()
+        logger.error(
+            f"Error al actualizar el rol del usuario {user_id}: {exc}",
+            "app.admin_update_user_role"
+        )
+        return jsonify({
+            "success": False,
+            "error": "No se pudo actualizar el rol del usuario. Inténtalo nuevamente."
+        }), 500
+
+
+@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+@login_required
+def admin_delete_user(user_id):
+    """Elimina un usuario junto con sus datos asociados."""
+    if not current_user.is_admin:
+        logger.warning(
+            f"Intento de eliminar usuario sin privilegios por parte del usuario {current_user.id}",
+            "app.admin_delete_user"
+        )
+        return jsonify({
+            "success": False,
+            "error": "No tienes permisos para realizar esta acción."
+        }), 403
+
+    target_user = db.session.get(User, user_id)
+    if not target_user:
+        return jsonify({
+            "success": False,
+            "error": "Usuario no encontrado."
+        }), 404
+
+    if target_user.id == current_user.id:
+        return jsonify({
+            "success": False,
+            "error": "No puedes eliminar tu propia cuenta desde este panel."
+        }), 400
+
+    if target_user.is_admin:
+        remaining_admins = User.query.filter(User.user_type == 0, User.id != user_id).count()
+        if remaining_admins == 0:
+            return jsonify({
+                "success": False,
+                "error": "No puedes eliminar al único administrador disponible."
+            }), 400
+
+    try:
+        # Eliminar archivos de historial de chat
+        removed_chat_files = 0
+        for filename in os.listdir(DATA_DIR):
+            if filename.startswith(f"{user_id}_") and filename.endswith('.json'):
+                file_path = os.path.join(DATA_DIR, filename)
+                try:
+                    os.remove(file_path)
+                    removed_chat_files += 1
+                except FileNotFoundError:
+                    logger.warning(f"Archivo de chat no encontrado durante la eliminación: {file_path}", "app.admin_delete_user")
+                except Exception as exc:
+                    logger.warning(f"No se pudo eliminar archivo {file_path}: {exc}", "app.admin_delete_user")
+
+        # Eliminar registros y vectores asociados a archivos
+        user_files = File.query.filter_by(user_id=user_id).all()
+        for user_file in user_files:
+            db_path = os.path.join(VECTORDB_DIR, user_file.file_hash)
+            if os.path.exists(db_path):
+                shutil.rmtree(db_path, ignore_errors=True)
+            db.session.delete(user_file)
+
+        # Limpiar archivos temporales asociados en uploads/users
+        users_upload_dir = os.path.join(UPLOAD_DIR, 'users')
+        if os.path.isdir(users_upload_dir):
+            for filename in os.listdir(users_upload_dir):
+                if filename.startswith(f"{user_id}_"):
+                    file_path = os.path.join(users_upload_dir, filename)
+                    try:
+                        os.remove(file_path)
+                    except FileNotFoundError:
+                        logger.debug(f"Archivo de upload ya inexistente: {file_path}", "app.admin_delete_user")
+                    except Exception as exc:
+                        logger.warning(f"No se pudo eliminar archivo de upload {file_path}: {exc}", "app.admin_delete_user")
+
+        # Eliminar chats y prompts relacionados
+        user_chats = Chat.query.filter_by(user_id=user_id).all()
+        for chat in user_chats:
+            db.session.delete(chat)
+
+        user_prompts = UserPrompt.query.filter_by(user_id=user_id).all()
+        for prompt in user_prompts:
+            db.session.delete(prompt)
+
+        db.session.delete(target_user)
+        db.session.commit()
+
+        logger.info(
+            f"Usuario {target_user.username} (ID {target_user.id}) eliminado por admin {current_user.username}",
+            "app.admin_delete_user"
+        )
+        return jsonify({"success": True, "removed_chat_files": removed_chat_files})
+    except Exception as exc:
+        db.session.rollback()
+        logger.error(f"Error al eliminar usuario {user_id}: {exc}", "app.admin_delete_user")
+        return jsonify({
+            "success": False,
+            "error": "No se pudo eliminar al usuario. Inténtalo nuevamente."
         }), 500
 
 

@@ -29,7 +29,7 @@
         };
     </script>
 </head>
-<body>
+<body data-is-admin="{{ 'true' if is_admin else 'false' }}">
     <div class="app-container">
         <div class="sidebar">
             <div class="user-header">
@@ -40,6 +40,12 @@
                             <span class="sr-only">Abrir menú de usuario</span>
                         </button>
                         <div id="user-menu-dropdown" class="user-menu-dropdown" role="menu" aria-hidden="true">
+                            {% if is_admin %}
+                            <button type="button" class="user-menu-item" data-action="manage-users" role="menuitem">
+                                <i class="fas fa-users-gear" aria-hidden="true"></i>
+                                <span>Administrar usuarios</span>
+                            </button>
+                            {% endif %}
                             <button type="button" class="user-menu-item" data-action="change-password" role="menuitem">
                                 <i class="fas fa-key" aria-hidden="true"></i>
                                 <span>Cambiar contraseña</span>
@@ -190,6 +196,67 @@
             <div class="modal-footer">
                 <button id="change-password-submit" class="primary-btn" type="submit" form="change-password-form">Actualizar contraseña</button>
                 <button class="cancel-btn modal-close" type="button">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para administrar usuarios -->
+    <div class="modal" id="manage-users-modal" role="dialog" aria-modal="true" aria-labelledby="manage-users-title">
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <h3 id="manage-users-title">Administrar usuarios</h3>
+                <button class="modal-close" type="button" aria-label="Cerrar">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="manage-users-description">Gestiona cuentas existentes. Puedes restablecer contraseñas, eliminar usuarios y marcar la casilla "Administrador" para otorgar o revocar ese permiso.</p>
+                <div id="manage-users-feedback" class="manage-users-feedback" role="status" aria-live="polite"></div>
+                <div class="manage-users-table-wrapper">
+                    <table class="manage-users-table" aria-describedby="manage-users-title">
+                        <colgroup>
+                            <col class="manage-users-col-user">
+                            <col class="manage-users-col-role">
+                            <col class="manage-users-col-email">
+                            <col class="manage-users-col-created">
+                            <col class="manage-users-col-actions">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th scope="col">Usuario</th>
+                                <th scope="col">Rol / Admin</th>
+                                <th scope="col">Correo</th>
+                                <th scope="col">Creado</th>
+                                <th scope="col" class="manage-users-actions-header">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="manage-users-table-body">
+                            <tr>
+                                <td colspan="5" class="manage-users-empty">Cargando información…</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="admin-reset-password" id="admin-reset-password-section" hidden>
+                    <h4 id="admin-reset-password-title">Resetear contraseña</h4>
+                    <p class="admin-reset-password-target">Usuario seleccionado: <strong id="admin-reset-target-name"></strong></p>
+                    <form id="admin-reset-password-form" class="admin-reset-password-form" aria-labelledby="admin-reset-password-title">
+                        <label for="admin-reset-password">Nueva contraseña</label>
+                        <input type="password" id="admin-reset-password" name="new_password" minlength="8" autocomplete="new-password" required>
+
+                        <label for="admin-reset-password-confirm">Confirmar nueva contraseña</label>
+                        <input type="password" id="admin-reset-password-confirm" name="confirm_new_password" minlength="8" autocomplete="new-password" required>
+
+                        <div id="admin-reset-password-feedback" class="admin-reset-password-feedback" role="status" aria-live="polite"></div>
+
+                        <div class="admin-reset-password-actions">
+                            <button type="submit" class="primary-btn">Guardar nueva contraseña</button>
+                            <button type="button" class="cancel-btn" id="admin-reset-password-cancel">Cancelar</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel-btn" type="button" data-role="close-manage-users">Cerrar</button>
             </div>
         </div>
     </div>
