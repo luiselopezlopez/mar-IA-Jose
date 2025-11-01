@@ -230,6 +230,22 @@ body {
     gap: 5px;
 }
 
+.rag-settings-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.rag-number-input {
+    width: 70px;
+    padding: 5px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: white;
+    font-size: 0.95rem;
+}
+
 .toolbar-btn {
     padding: 5px 10px;
     background-color: #f0f0f0;
@@ -309,6 +325,12 @@ body.dark-mode .system-message-btn,
 body.dark-mode .toolbar-btn {
     background-color: #333;
     border-color: #444;
+    color: #e0e0e0;
+}
+
+body.dark-mode .rag-number-input {
+    background-color: #1a1a1a;
+    border-color: #333;
     color: #e0e0e0;
 }
 

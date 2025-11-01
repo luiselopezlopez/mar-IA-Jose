@@ -1258,8 +1258,23 @@ def chat():
     chat_id = data.get('chat_id')
     model_id = data.get('model_id')  # Obtener el modelo seleccionado
     custom_system_message = data.get('system_message')  # Obtener mensaje de sistema personalizado
+    requested_top_k = data.get('rag_top_k')
+    requested_temperature = data.get('temperature')
 
     user_id = get_user_id()
+
+    # Configuración dinámica de RAG y temperatura
+    try:
+        rag_top_k = int(requested_top_k)
+    except (TypeError, ValueError):
+        rag_top_k = 3
+    rag_top_k = max(1, min(rag_top_k, 20))
+
+    try:
+        generation_temperature = float(requested_temperature)
+    except (TypeError, ValueError):
+        generation_temperature = 1.0
+    generation_temperature = max(0.0, min(generation_temperature, 2.0))
 
     # Cargar historial de chat existente o crear uno nuevo
     messages = load_chat_history(user_id, chat_id)
@@ -1335,7 +1350,7 @@ def chat():
 
     # Realizar RAG usando la base vectorial del chat
     context = ""
-    relevant_docs = query_documents_for_chat(user_message, chat_id)
+    relevant_docs = query_documents_for_chat(user_message, chat_id, k=rag_top_k)
     if relevant_docs:
         context = "Información relevante de los documentos:\n\n"
         for i, doc in enumerate(relevant_docs):
@@ -1445,7 +1460,7 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
             # El parámetro model no es necesario para Azure AI Inference porque ya está configurado en el endpoint
             response = model_client.complete(
                 messages=inference_messages,
-                temperature=1.0,
+                temperature=generation_temperature,
                 max_tokens=4090
             )
             
@@ -1478,7 +1493,7 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
                 response = model_client.chat.completions.create(
                     model=model_id if model_id else AZURE_OPENAI_DEPLOYMENT,
                     messages=api_messages,
-                    temperature=1.0,
+                    temperature=generation_temperature,
                     max_tokens=4090
                 )
                 assistant_message = response.choices[0].message.content
@@ -1491,7 +1506,7 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
         response = model_client.chat.completions.create(
             model=model_id if model_id else AZURE_OPENAI_DEPLOYMENT,
             messages=api_messages,
-            temperature=1.0,
+            temperature=generation_temperature,
             max_completion_tokens=4090
         )
         assistant_message = response.choices[0].message.content
@@ -1499,7 +1514,7 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
         response = model_client.chat.completions.create(
             model=model_id if model_id else AZURE_OPENAI_DEPLOYMENT,
             messages=api_messages,
-            temperature=1.0,
+            temperature=generation_temperature,
             max_tokens=4090
             # El parámetro max_tokens_per_message no es compatible con la versión actual de la API
         )

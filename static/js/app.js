@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const newChatBtn = document.getElementById('new-chat-btn');
     const chatList = document.querySelector('.chat-list');
     const modelSelect = document.getElementById('model-select');
+    const ragTopKInput = document.getElementById('rag-top-k');
+    const temperatureInput = document.getElementById('temperature-input');
     const cameraBtn = document.getElementById('camera-btn');
     const helpBtn = document.getElementById('help-btn');
     const DEFAULT_SYSTEM_PROMPT_TEXT = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas.";
@@ -1370,6 +1372,22 @@ document.addEventListener('DOMContentLoaded', function() {
         const systemMessageInput = document.getElementById('system-message-input');
         const systemMessage = systemMessageInput ? systemMessageInput.value : null;
 
+        // Obtener parámetros de RAG y generación
+        const parsedTopK = ragTopKInput ? parseInt(ragTopKInput.value, 10) : null;
+        const sanitizedTopK = Number.isFinite(parsedTopK) ? Math.min(Math.max(parsedTopK, 1), 20) : null;
+        if (ragTopKInput && sanitizedTopK !== null && sanitizedTopK !== parsedTopK) {
+            ragTopKInput.value = sanitizedTopK;
+        }
+
+        const parsedTemperature = temperatureInput ? parseFloat(temperatureInput.value) : null;
+        let sanitizedTemperature = Number.isFinite(parsedTemperature) ? Math.min(Math.max(parsedTemperature, 0), 2) : null;
+        if (sanitizedTemperature !== null) {
+            sanitizedTemperature = Math.round(sanitizedTemperature * 10) / 10;
+        }
+        if (temperatureInput && sanitizedTemperature !== null && sanitizedTemperature !== parsedTemperature) {
+            temperatureInput.value = sanitizedTemperature.toFixed(1);
+        }
+
         fetch('/api/chat', {
             method: 'POST',
             headers: {
@@ -1380,7 +1398,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 message: messageContent,
                 chat_id: currentChatId,
                 model_id: currentModelId,
-                system_message: systemMessage
+                system_message: systemMessage,
+                rag_top_k: sanitizedTopK,
+                temperature: sanitizedTemperature
             })
         })
         .then(response => response.json())
