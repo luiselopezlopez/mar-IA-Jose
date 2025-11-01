@@ -109,3 +109,7 @@ body.dark-mode {
     background-color: #b71c1c;
     color: #e0e0e0;
 }
+
+.dark-mode .queue-item-progress-message {
+    color: #cfcfcf;
+}

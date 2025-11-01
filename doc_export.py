@@ -123,6 +123,8 @@ def _parse_table_lines(buffer: List[str]) -> Optional[Tuple[List[str], List[List
 
 def _add_markdown_paragraph(document: 'docx.document.Document', line: str, list_ctx: dict) -> None:
     """Añade una línea interpretando Markdown extendido (listas, tablas, citas, etc)."""
+    stripped = line.strip()
+
     # Encabezados
     m = MD_HEADER_RE.match(line)
     if m:
@@ -146,6 +148,10 @@ def _add_markdown_paragraph(document: 'docx.document.Document', line: str, list_
 
     if list_ctx.get('in_code_block'):
         list_ctx['code_buffer'].append(line)
+        return
+
+    # Eliminar separadores horizontales o líneas solo con signos repetidos
+    if stripped and len(stripped) >= 3 and set(stripped).issubset({'-', '_', '*'}) and len(set(stripped)) == 1:
         return
 
     # Citas
@@ -180,6 +186,10 @@ def _add_markdown_paragraph(document: 'docx.document.Document', line: str, list_
         list_ctx['pending_table'] = False
         list_ctx['table_buffer'] = []
         # Continuar procesando la línea actual como normal (no parte de tabla)
+
+    # Omitir líneas vacías para respetar el espaciado del estilo Word
+    if not stripped:
+        return
 
     # Listas con indentación
     m_ul = MD_ULIST_RE.match(line)
@@ -291,7 +301,6 @@ def guardar_respuesta_en_word(texto_respuesta: str, ruta_salida: str) -> str:
     _ensure_code_style(doc)
     doc.add_heading('Documentación del asistente', level=1)
     doc.add_paragraph(f"Generado: {ahora.strftime('%Y-%m-%d %H:%M:%S')}")
-    doc.add_paragraph('-' * 40)
 
     list_ctx: Dict[str, Any] = {"in_code_block": False, "code_buffer": []}
     for linea in texto_respuesta.splitlines():

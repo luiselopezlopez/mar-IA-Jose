@@ -58,6 +58,14 @@
     background-color: #eee;
 }
 
+.queue-item-progress-message {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #555;
+    word-break: break-word;
+}
+
 .queue-item-pending .queue-item-status {
     background-color: #e3f2fd;
     color: #0078d4;

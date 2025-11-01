@@ -4,6 +4,8 @@ import uuid
 import json
 import io
 import base64
+import time
+from threading import Lock
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, get_flashed_messages, Response
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
@@ -334,6 +336,85 @@ embeddings = AzureOpenAIEmbeddings(
 )
 
 
+EMBEDDING_PROGRESS = {}
+EMBEDDING_PROGRESS_LOCK = Lock()
+
+
+def set_embedding_progress(progress_id: str | None, **updates):
+    if not progress_id:
+        return
+    with EMBEDDING_PROGRESS_LOCK:
+        state = EMBEDDING_PROGRESS.get(progress_id)
+        if not state:
+            state = {
+                'created_at': datetime.utcnow().isoformat()
+            }
+        state.update(updates)
+        state['updated_at'] = datetime.utcnow().isoformat()
+        EMBEDDING_PROGRESS[progress_id] = state
+
+
+def is_rate_limit_error(exc):
+    """Detecta si la excepción proviene de un límite de peticiones (HTTP 429)."""
+    status_code = getattr(exc, 'status_code', None)
+    if status_code == 429:
+        return True
+    http_status = getattr(exc, 'http_status', None)
+    if http_status == 429:
+        return True
+    error_code = getattr(getattr(exc, 'error', None), 'code', None)
+    if error_code in (429, '429'):
+        return True
+    message = str(exc).lower()
+    return '429' in message or 'rate limit' in message
+
+
+def build_vectorstore_with_retry(chunks, embedding_client, *, base_delay=10, max_delay=30, progress_id=None):
+    """Crea la base vectorial aplicando reintentos con backoff ante errores 429."""
+    attempt = 0
+    last_exc = None
+    set_embedding_progress(progress_id, status="starting", attempt=0, waiting_seconds=0, completed=False)
+    while True:
+        attempt += 1
+        try:
+            set_embedding_progress(progress_id, status="processing", attempt=attempt, waiting_seconds=0, completed=False)
+            vectorstore = FAISS.from_documents(chunks, embedding_client)
+            set_embedding_progress(progress_id, status="completed", attempt=attempt, waiting_seconds=0, completed=True)
+            return vectorstore
+        except Exception as exc:
+            last_exc = exc
+            if not is_rate_limit_error(exc):
+                set_embedding_progress(
+                    progress_id,
+                    status="failed",
+                    attempt=attempt,
+                    waiting_seconds=0,
+                    completed=True,
+                    error=str(exc)
+                )
+                break
+
+            wait_time = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            logger.warning(
+                f"Límite de peticiones al generar embeddings (intento {attempt}). Reintentando en {wait_time} segundos.",
+                "app.build_vectorstore_with_retry"
+            )
+            set_embedding_progress(
+                progress_id,
+                status="rate_limited",
+                attempt=attempt,
+                waiting_seconds=wait_time,
+                completed=False
+            )
+            time.sleep(wait_time)
+            set_embedding_progress(progress_id, status="reintentando", attempt=attempt, waiting_seconds=0, completed=False)
+
+    if last_exc is None:
+        raise RuntimeError("No se pudo construir la base vectorial por un motivo desconocido.")
+
+    raise last_exc
+
+
 def get_user_id():
     """Obtiene el ID del usuario actual o crea uno temporal para sesiones no autenticadas"""
     if current_user.is_authenticated:
@@ -552,6 +633,138 @@ def ensure_user_type_consistency():
         logger.error(f"No se pudo asegurar la consistencia de user_type: {exc}", "app.ensure_user_type_consistency")
         db.session.rollback()
 
+
+def migrate_vectorstores_to_chat_system():
+    """Migra las bases vectoriales existentes del sistema por archivo al sistema por chat"""
+    try:
+        logger.info("Iniciando migración de bases vectoriales al sistema por chat", "app.migrate_vectorstores")
+        
+        # Verificar si ya existe el directorio de migración (para evitar re-migrar)
+        migration_marker = os.path.join(VECTORDB_DIR, '.migrated_to_chat_system')
+        if os.path.exists(migration_marker):
+            logger.debug("Migración ya realizada anteriormente", "app.migrate_vectorstores")
+            return
+        
+        migrated_count = 0
+        error_count = 0
+        
+        # Obtener todos los chats existentes
+        for filename in os.listdir(DATA_DIR):
+            if filename.endswith('.json') and '_' in filename:
+                try:
+                    # Extraer user_id y chat_id del nombre del archivo
+                    parts = filename.replace('.json', '').split('_', 1)
+                    if len(parts) != 2:
+                        continue
+                    
+                    user_id, chat_id = parts
+                    
+                    # Cargar datos del chat
+                    with open(os.path.join(DATA_DIR, filename), 'r', encoding='utf-8') as f:
+                        chat_data = json.load(f)
+                    
+                    file_hashes = chat_data.get('file_hashes', [])
+                    if not file_hashes:
+                        continue
+                    
+                    logger.debug(f"Migrando chat {chat_id} con {len(file_hashes)} archivos", "app.migrate_vectorstores")
+                    
+                    # Recopilar todos los chunks de los archivos del chat
+                    all_chunks = []
+                    valid_file_hashes = []
+                    
+                    for file_hash in file_hashes:
+                        old_db_path = os.path.join(VECTORDB_DIR, file_hash)
+                        if os.path.exists(old_db_path):
+                            try:
+                                # Cargar la base vectorial antigua
+                                vectorstore = FAISS.load_local(old_db_path, embeddings, allow_dangerous_deserialization=True)
+                                
+                                # Obtener todos los documentos
+                                docs = list(vectorstore.docstore._dict.values())
+                                
+                                # Añadir metadatos del archivo a cada documento
+                                for doc in docs:
+                                    if 'file_hash' not in doc.metadata:
+                                        doc.metadata['file_hash'] = file_hash
+                                
+                                all_chunks.extend(docs)
+                                valid_file_hashes.append(file_hash)
+                                logger.debug(f"Cargados {len(docs)} chunks del archivo {file_hash}", "app.migrate_vectorstores")
+                                
+                            except Exception as e:
+                                logger.warning(f"Error al cargar base vectorial antigua {file_hash}: {str(e)}", "app.migrate_vectorstores")
+                                continue
+                    
+                    if all_chunks:
+                        # Crear nueva base vectorial para el chat
+                        chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+                        os.makedirs(chat_db_path, exist_ok=True)
+                        
+                        new_vectorstore = build_vectorstore_with_retry(all_chunks, embeddings)
+                        new_vectorstore.save_local(chat_db_path)
+                        
+                        logger.info(f"Chat {chat_id} migrado con {len(all_chunks)} chunks de {len(valid_file_hashes)} archivos", "app.migrate_vectorstores")
+                        migrated_count += 1
+                        
+                        # Actualizar el chat con solo los file_hashes válidos
+                        if len(valid_file_hashes) != len(file_hashes):
+                            chat_data['file_hashes'] = valid_file_hashes
+                            with open(os.path.join(DATA_DIR, filename), 'w', encoding='utf-8') as f:
+                                json.dump(chat_data, f, ensure_ascii=False, indent=2)
+                            logger.debug(f"Actualizada lista de archivos del chat {chat_id}", "app.migrate_vectorstores")
+                    
+                except Exception as e:
+                    logger.error(f"Error al migrar chat desde archivo {filename}: {str(e)}", "app.migrate_vectorstores")
+                    error_count += 1
+                    continue
+        
+        # Crear marcador de migración
+        with open(migration_marker, 'w', encoding='utf-8') as f:
+            f.write(f"Migración completada: {datetime.now().isoformat()}\n")
+            f.write(f"Chats migrados: {migrated_count}\n")
+            f.write(f"Errores: {error_count}\n")
+        
+        logger.info(f"Migración completada: {migrated_count} chats migrados, {error_count} errores", "app.migrate_vectorstores")
+        
+        # Opcional: limpiar bases vectoriales antiguas después de un tiempo
+        # (comentado por seguridad, se puede descomentar después de verificar que todo funciona)
+        # cleanup_old_vectorstores()
+        
+    except Exception as e:
+        logger.error(f"Error durante la migración de bases vectoriales: {str(e)}", "app.migrate_vectorstores")
+
+
+def cleanup_old_vectorstores():
+    """Limpia las bases vectoriales antiguas (solo por hash de archivo) después de la migración.
+    
+    PRECAUCIÓN: Solo ejecutar después de verificar que la migración fue exitosa.
+    """
+    try:
+        logger.info("Iniciando limpieza de bases vectoriales antiguas", "app.cleanup_old_vectorstores")
+        
+        cleaned_count = 0
+        for item in os.listdir(VECTORDB_DIR):
+            item_path = os.path.join(VECTORDB_DIR, item)
+            
+            # Saltar archivos y directorios especiales
+            if item.startswith('.') or not os.path.isdir(item_path):
+                continue
+            
+            # Si el nombre es un hash MD5 (32 caracteres hexadecimales), es del sistema antiguo
+            if len(item) == 32 and all(c in '0123456789abcdef' for c in item.lower()):
+                try:
+                    shutil.rmtree(item_path)
+                    cleaned_count += 1
+                    logger.debug(f"Base vectorial antigua eliminada: {item}", "app.cleanup_old_vectorstores")
+                except Exception as e:
+                    logger.warning(f"No se pudo eliminar base vectorial antigua {item}: {str(e)}", "app.cleanup_old_vectorstores")
+        
+        logger.info(f"Limpieza completada: {cleaned_count} bases vectoriales antiguas eliminadas", "app.cleanup_old_vectorstores")
+        
+    except Exception as e:
+        logger.error(f"Error durante la limpieza de bases vectoriales antiguas: {str(e)}", "app.cleanup_old_vectorstores")
+
 def extract_images_from_pdf(file_path):
     """Extrae imágenes de un archivo PDF y realiza OCR o genera descripciones usando GPT-4o"""
     image_texts = []
@@ -651,26 +864,31 @@ def extract_images_from_pdf(file_path):
     doc.close()
     return image_texts
 
-def process_file(file_path, process_images=True):
-    """Procesa un archivo para RAG
+def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=None):
+    """Procesa un archivo para RAG y lo añade a la base vectorial del chat específico
     
     Args:
         file_path: Ruta al archivo a procesar
+        chat_id: ID del chat al que pertenece el archivo
         process_images: Si es True, procesa las imágenes en PDFs con OCR. Si es False, solo procesa el texto.
+        progress_id: ID para seguimiento del progreso
+    
+    Returns:
+        tuple: (file_hash, num_chunks) - hash del archivo y número de fragmentos procesados
     """
     file_extension = os.path.splitext(file_path)[1].lower()
-    logger.info(f"Procesando archivo: {os.path.basename(file_path)} ({file_extension})", "app.process_file")    
+    logger.info(f"Procesando archivo para chat {chat_id}: {os.path.basename(file_path)} ({file_extension})", "app.process_file_for_chat")    
     
     if file_extension == '.pdf':
         # Extraer imágenes y realizar OCR antes de cargar el documento solo si process_images es True
         image_texts = []
         if file_extension == '.pdf' and process_images:
             try:
-                logger.info("Iniciando extracción de imágenes del PDF", "app.process_file")
+                logger.info("Iniciando extracción de imágenes del PDF", "app.process_file_for_chat")
                 image_texts = extract_images_from_pdf(file_path)
             except Exception as e:
                 error_msg = f"Error al extraer imágenes del PDF: {str(e)}"
-                logger.error(error_msg, "app.process_file")
+                logger.error(error_msg, "app.process_file_for_chat")
                 print(error_msg)
                 # Continuar con el procesamiento del PDF sin las imágenes
                 image_texts = []  # Asegurar que está vacío para no afectar el resto del proceso
@@ -680,22 +898,22 @@ def process_file(file_path, process_images=True):
             loader = PyPDFLoader(file_path)
         except Exception as e:
             error_msg = f"Error al cargar el PDF con PyPDFLoader: {str(e)}"
-            logger.error(error_msg, "app.process_file")
+            logger.error(error_msg, "app.process_file_for_chat")
             # Intentar con alternativa
             from langchain_community.document_loaders import PyPDFium2Loader
             try:
                 loader = PyPDFium2Loader(file_path)
-                logger.info("PDF cargado con éxito usando PyPDFium2Loader como alternativa", "app.process_file")
+                logger.info("PDF cargado con éxito usando PyPDFium2Loader como alternativa", "app.process_file_for_chat")
             except Exception as e2:
                 # Si todo falla, intentar con un loader más básico
                 from langchain_community.document_loaders import UnstructuredPDFLoader
                 try:
                     loader = UnstructuredPDFLoader(file_path)
-                    logger.info("PDF cargado con éxito usando UnstructuredPDFLoader como última alternativa", "app.process_file")
+                    logger.info("PDF cargado con éxito usando UnstructuredPDFLoader como última alternativa", "app.process_file_for_chat")
                 except Exception as e3:
                     # Error fatal, no se puede procesar el PDF
                     error_msg = f"No se pudo cargar el PDF con ningún cargador disponible: {str(e3)}"
-                    logger.error(error_msg, "app.process_file")
+                    logger.error(error_msg, "app.process_file_for_chat")
                     raise ValueError(error_msg)
     elif file_extension == '.docx':
         loader = Docx2txtLoader(file_path)
@@ -703,11 +921,12 @@ def process_file(file_path, process_images=True):
         loader = TextLoader(file_path)
     else:
         error_msg = f"Formato de archivo no soportado: {file_extension}"
-        logger.error(error_msg, "app.process_file")
+        logger.error(error_msg, "app.process_file_for_chat")
         raise ValueError(error_msg)
 
     try:
         documents = loader.load()
+        set_embedding_progress(progress_id, status="document_loaded", attempt=0, waiting_seconds=0, completed=False)
 
         # Verificar si hay documentos antes de procesarlos
         if not documents:
@@ -731,26 +950,163 @@ def process_file(file_path, process_images=True):
             chunk_overlap=200
         )
         chunks = text_splitter.split_documents(documents)
+        set_embedding_progress(progress_id, status="chunking", attempt=0, waiting_seconds=0, completed=False)
 
         # Verificar si hay chunks antes de crear la base de datos vectorial
         if not chunks:
             raise ValueError("No se pudo dividir el contenido del archivo en fragmentos")
 
-        # Crear o actualizar la base de datos vectorial
+        # Añadir hash del archivo a los metadatos de cada chunk para poder identificarlo después
         file_hash = hashlib.md5(open(file_path, 'rb').read()).hexdigest()
-        db_path = os.path.join(VECTORDB_DIR, file_hash)
+        filename = os.path.basename(file_path)
+        for chunk in chunks:
+            chunk.metadata['file_hash'] = file_hash
+            chunk.metadata['filename'] = filename
 
-        # Crear vectorstore con FAISS
-        vectorstore = FAISS.from_documents(chunks, embeddings)
-        vectorstore.save_local(db_path)
+        # Añadir chunks a la base vectorial del chat
+        add_chunks_to_chat_vectorstore(chat_id, chunks, progress_id)
 
         return file_hash, len(chunks)
     except Exception as e:
         # Capturar errores específicos y proporcionar un mensaje más descriptivo
+        set_embedding_progress(progress_id, status="failed", completed=True, error=str(e))
         raise ValueError(f"Error al procesar el archivo: {str(e)}")
 
+
+def add_chunks_to_chat_vectorstore(chat_id, new_chunks, progress_id=None):
+    """Añade chunks a la base vectorial específica del chat
+    
+    Args:
+        chat_id: ID del chat
+        new_chunks: Lista de chunks a añadir
+        progress_id: ID para seguimiento del progreso
+    """
+    chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+    
+    set_embedding_progress(progress_id, status="vectorizing", attempt=0, waiting_seconds=0, completed=False)
+    
+    try:
+        if os.path.exists(chat_db_path):
+            # Cargar base vectorial existente y añadir nuevos chunks
+            logger.debug(f"Cargando base vectorial existente para chat {chat_id}", "app.add_chunks_to_chat_vectorstore")
+            vectorstore = FAISS.load_local(chat_db_path, embeddings, allow_dangerous_deserialization=True)
+            
+            # Crear vectorstore temporal con los nuevos chunks
+            logger.debug(f"Añadiendo {len(new_chunks)} nuevos chunks a la base vectorial", "app.add_chunks_to_chat_vectorstore")
+            new_vectorstore = build_vectorstore_with_retry(new_chunks, embeddings, progress_id=progress_id)
+            
+            # Combinar con la base existente
+            vectorstore.merge_from(new_vectorstore)
+        else:
+            # Crear nueva base vectorial
+            logger.debug(f"Creando nueva base vectorial para chat {chat_id}", "app.add_chunks_to_chat_vectorstore")
+            os.makedirs(chat_db_path, exist_ok=True)
+            vectorstore = build_vectorstore_with_retry(new_chunks, embeddings, progress_id=progress_id)
+        
+        # Guardar la base vectorial actualizada
+        vectorstore.save_local(chat_db_path)
+        logger.info(f"Base vectorial del chat {chat_id} actualizada con {len(new_chunks)} chunks", "app.add_chunks_to_chat_vectorstore")
+        
+    except Exception as e:
+        logger.error(f"Error al actualizar base vectorial del chat {chat_id}: {str(e)}", "app.add_chunks_to_chat_vectorstore")
+        raise
+
+
+def rebuild_chat_vectorstore(chat_id, file_hashes_to_keep, progress_id=None):
+    """Reconstruye la base vectorial del chat con solo los archivos especificados
+    
+    Args:
+        chat_id: ID del chat
+        file_hashes_to_keep: Lista de hashes de archivos que se deben mantener
+        progress_id: ID para seguimiento del progreso
+    """
+    chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+    
+    if not file_hashes_to_keep:
+        # Si no hay archivos que mantener, eliminar toda la base vectorial
+        if os.path.exists(chat_db_path):
+            shutil.rmtree(chat_db_path)
+            logger.info(f"Base vectorial del chat {chat_id} eliminada (no hay archivos)", "app.rebuild_chat_vectorstore")
+        return
+    
+    if not os.path.exists(chat_db_path):
+        logger.warning(f"Base vectorial del chat {chat_id} no existe para reconstruir", "app.rebuild_chat_vectorstore")
+        return
+    
+    try:
+        # Cargar base vectorial existente
+        vectorstore = FAISS.load_local(chat_db_path, embeddings, allow_dangerous_deserialization=True)
+        
+        # Obtener todos los documentos
+        all_docs = vectorstore.docstore._dict.values()
+        
+        # Filtrar documentos que pertenecen a archivos que se deben mantener
+        filtered_docs = [
+            doc for doc in all_docs 
+            if doc.metadata.get('file_hash') in file_hashes_to_keep
+        ]
+        
+        if not filtered_docs:
+            # No hay documentos que mantener, eliminar la base vectorial
+            shutil.rmtree(chat_db_path)
+            logger.info(f"Base vectorial del chat {chat_id} eliminada (documentos filtrados)", "app.rebuild_chat_vectorstore")
+            return
+        
+        # Recrear la base vectorial solo con los documentos filtrados
+        set_embedding_progress(progress_id, status="rebuilding", attempt=0, waiting_seconds=0, completed=False)
+        
+        # Eliminar la base existente
+        shutil.rmtree(chat_db_path)
+        os.makedirs(chat_db_path, exist_ok=True)
+        
+        # Crear nueva base vectorial con los documentos filtrados
+        new_vectorstore = build_vectorstore_with_retry(filtered_docs, embeddings, progress_id=progress_id)
+        new_vectorstore.save_local(chat_db_path)
+        
+        logger.info(f"Base vectorial del chat {chat_id} reconstruida con {len(filtered_docs)} chunks de {len(file_hashes_to_keep)} archivos", "app.rebuild_chat_vectorstore")
+        
+    except Exception as e:
+        logger.error(f"Error al reconstruir base vectorial del chat {chat_id}: {str(e)}", "app.rebuild_chat_vectorstore")
+        raise
+
+def query_documents_for_chat(query, chat_id, k=3):
+    """Consulta documentos relevantes para RAG desde la base vectorial específica del chat
+    
+    Args:
+        query: Consulta a realizar
+        chat_id: ID del chat para buscar en su base vectorial
+        k: Número de documentos relevantes a devolver
+    
+    Returns:
+        list: Lista de documentos relevantes
+    """
+    if not chat_id:
+        return []
+
+    chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+    
+    if not os.path.exists(chat_db_path):
+        logger.debug(f"No existe base vectorial para el chat {chat_id}", "app.query_documents_for_chat")
+        return []
+
+    try:
+        # Cargar la base vectorial del chat
+        vectorstore = FAISS.load_local(chat_db_path, embeddings, allow_dangerous_deserialization=True)
+        
+        # Realizar búsqueda de similitud
+        docs = vectorstore.similarity_search(query, k=k)
+        
+        logger.debug(f"Encontrados {len(docs)} documentos relevantes para el chat {chat_id}", "app.query_documents_for_chat")
+        return docs
+        
+    except Exception as e:
+        logger.error(f"Error al consultar documentos del chat {chat_id}: {str(e)}", "app.query_documents_for_chat")
+        return []
+
+
+# Mantener función legacy para compatibilidad con código existente
 def query_documents(query, file_hashes, k=3):
-    """Consulta documentos relevantes para RAG"""
+    """Consulta documentos relevantes para RAG (función legacy para compatibilidad)"""
     if not file_hashes:
         return []
 
@@ -977,14 +1333,13 @@ def chat():
     if env_level == 'development':
         logger.debug(f"Intent detection: detected={intent_detected} reasons={intent_reasons}", "app.chat.intent")
 
-    # Realizar RAG si hay archivos subidos
+    # Realizar RAG usando la base vectorial del chat
     context = ""
-    if file_hashes:
-        relevant_docs = query_documents(user_message, file_hashes)
-        if relevant_docs:
-            context = "Información relevante de los documentos:\n\n"
-            for i, doc in enumerate(relevant_docs):
-                context += f"{i+1}. {doc.page_content}\n\n"
+    relevant_docs = query_documents_for_chat(user_message, chat_id)
+    if relevant_docs:
+        context = "Información relevante de los documentos:\n\n"
+        for i, doc in enumerate(relevant_docs):
+            context += f"{i+1}. {doc.page_content}\n\n"
 
     # Preparar mensajes para la API
     api_messages = []
@@ -1294,29 +1649,37 @@ def get_chat(chat_id):
 @app.route('/api/upload', methods=['POST'])
 @login_required
 def upload_file():
-    """Endpoint para subir archivos"""
+    """Endpoint para subir archivos y añadirlos a la base RAG del chat actual"""
     if 'file' not in request.files:
         logger.warning("No se proporcionó archivo en la solicitud", "app.upload_file")
         return jsonify({"error": "No se proporcionó archivo"}), 400
     
     file = request.files['file']
     process_images = request.form.get('process_images', 'true').lower() == 'true'
+    progress_id = request.form.get('upload_id') or str(uuid.uuid4())
     
     if file.filename == '':
         logger.warning("Nombre de archivo vacío", "app.upload_file")
         return jsonify({"error": "No se seleccionó archivo"}), 400
     
+    # Verificar que hay un chat activo
+    chat_id = session.get('chat_id')
+    if not chat_id:
+        logger.warning("No hay chat activo para subir archivo", "app.upload_file")
+        return jsonify({"error": "No hay chat activo. Crea un nuevo chat primero."}), 400
+    
     if file:
         try:
             filename = secure_filename(file.filename)
-            logger.info(f"Procesando archivo subido: {filename}", "app.upload_file")
+            logger.info(f"Procesando archivo subido para chat {chat_id}: {filename}", "app.upload_file")
+            set_embedding_progress(progress_id, status="queued", filename=filename, completed=False, attempt=0, waiting_seconds=0)
             
             # Guardar archivo
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(file_path)
             
-            # Procesar archivo para RAG
-            file_hash, num_chunks = process_file(file_path, process_images)
+            # Procesar archivo para RAG y añadirlo al chat actual
+            file_hash, num_chunks = process_file_for_chat(file_path, chat_id, process_images, progress_id=progress_id)
             
             # Guardar referencia al archivo en la sesión
             if 'file_hashes' not in session:
@@ -1327,19 +1690,15 @@ def upload_file():
             
             # Actualizar el chat actual con el nuevo file_hash
             user_id = get_user_id()
-            chat_id = session.get('chat_id')
-            if chat_id:
-                # Cargar datos actuales del chat
-                chat_data = get_chat_data(user_id, chat_id)
-                # Guardar el chat con los file_hashes actualizados
-                save_chat_history(
-                    user_id, 
-                    chat_data.get('messages', []), 
-                    chat_data.get('system_message'), 
-                    chat_data.get('title'),
-                    session['file_hashes']
-                )
-                logger.debug(f"Chat {chat_id} actualizado con nuevo archivo: {filename}", "app.upload_file")
+            chat_data = get_chat_data(user_id, chat_id)
+            save_chat_history(
+                user_id, 
+                chat_data.get('messages', []), 
+                chat_data.get('system_message'), 
+                chat_data.get('title'),
+                session['file_hashes']
+            )
+            logger.debug(f"Chat {chat_id} actualizado con nuevo archivo: {filename}", "app.upload_file")
             
             # Guardar en base de datos si el usuario está autenticado
             if current_user.is_authenticated:
@@ -1356,19 +1715,43 @@ def upload_file():
                     db.session.commit()
                     logger.info(f"Archivo guardado en base de datos: {filename}", "app.upload_file")
             
-            logger.info(f"Archivo procesado exitosamente: {filename} ({num_chunks} fragmentos)", "app.upload_file")
+            logger.info(f"Archivo procesado exitosamente para chat {chat_id}: {filename} ({num_chunks} fragmentos)", "app.upload_file")
+            set_embedding_progress(progress_id, status="completed", completed=True, attempt=None, waiting_seconds=0, file_hash=file_hash, chunks=num_chunks)
             return jsonify({
                 "success": True,
                 "filename": filename,
                 "file_hash": file_hash,
-                "chunks": num_chunks
+                "chunks": num_chunks,
+                "progress_id": progress_id,
+                "chat_id": chat_id
             })
             
         except Exception as e:
             logger.error(f"Error al procesar archivo: {str(e)}", "app.upload_file")
-            return jsonify({"error": str(e)}), 500
+            set_embedding_progress(progress_id, status="failed", completed=True, error=str(e))
+            return jsonify({"error": str(e), "progress_id": progress_id}), 500
     
     return jsonify({"error": "Error desconocido"}), 500
+
+
+@app.route('/api/upload/progress/<progress_id>', methods=['GET'])
+@login_required
+def get_upload_progress(progress_id):
+    with EMBEDDING_PROGRESS_LOCK:
+        progress = EMBEDDING_PROGRESS.get(progress_id)
+
+    if not progress:
+        return jsonify({
+            "found": False,
+            "progress": None,
+            "server_time": datetime.utcnow().isoformat()
+        })
+
+    return jsonify({
+        "found": True,
+        "progress": progress,
+        "server_time": datetime.utcnow().isoformat()
+    })
 
 @app.route('/api/models', methods=['GET'])
 def get_models():
@@ -1435,8 +1818,12 @@ def get_files():
 
 @app.route('/api/files/<file_hash>', methods=['DELETE'])
 def delete_file(file_hash):
-    """Endpoint para eliminar un archivo de la sesión"""
+    """Endpoint para eliminar un archivo del chat actual y reconstruir su base RAG"""
     file_hashes = session.get('file_hashes', [])
+    chat_id = session.get('chat_id')
+
+    if not chat_id:
+        return jsonify({"error": "No hay chat activo"}), 400
 
     if file_hash in file_hashes:
         file_hashes.remove(file_hash)
@@ -1444,26 +1831,25 @@ def delete_file(file_hash):
 
         # Actualizar el chat actual con la lista de archivos modificada
         user_id = get_user_id()
-        chat_id = session.get('chat_id')
-        if chat_id:
-            # Cargar datos actuales del chat
-            chat_data = get_chat_data(user_id, chat_id)
-            # Guardar el chat con los file_hashes actualizados
-            save_chat_history(
-                user_id, 
-                chat_data.get('messages', []), 
-                chat_data.get('system_message'), 
-                chat_data.get('title'),
-                file_hashes
-            )
-            logger.debug(f"Chat {chat_id} actualizado tras eliminar archivo {file_hash}", "app.delete_file")
+        chat_data = get_chat_data(user_id, chat_id)
+        save_chat_history(
+            user_id, 
+            chat_data.get('messages', []), 
+            chat_data.get('system_message'), 
+            chat_data.get('title'),
+            file_hashes
+        )
+        logger.debug(f"Chat {chat_id} actualizado tras eliminar archivo {file_hash}", "app.delete_file")
 
-        # Opcional: eliminar la base de datos vectorial
-        db_path = os.path.join(VECTORDB_DIR, file_hash)
-        if os.path.exists(db_path):
-            import shutil
-            shutil.rmtree(db_path)
-        return jsonify({"success": True})
+        # Reconstruir la base vectorial del chat sin el archivo eliminado
+        try:
+            rebuild_chat_vectorstore(chat_id, file_hashes)
+            logger.info(f"Base vectorial del chat {chat_id} reconstruida sin archivo {file_hash}", "app.delete_file")
+        except Exception as e:
+            logger.error(f"Error al reconstruir base vectorial tras eliminar archivo: {str(e)}", "app.delete_file")
+            # No retornamos error porque el archivo ya se eliminó de la lista
+        
+        return jsonify({"success": True, "chat_id": chat_id})
 
     return jsonify({"error": "Archivo no encontrado"}), 404
             
@@ -1867,17 +2253,29 @@ def admin_delete_user(user_id):
 
 @app.route('/api/chat/<chat_id>', methods=['DELETE'])
 def delete_chat(chat_id):
-    """Endpoint para eliminar un chat"""
+    """Endpoint para eliminar un chat y su base de datos RAG asociada"""
     user_id = get_user_id()
     filename = os.path.join(DATA_DIR, f"{user_id}_{chat_id}.json")
 
     if os.path.exists(filename):
         os.remove(filename)
+        logger.info(f"Archivo de chat eliminado: {filename}", "app.delete_chat")
 
+        # Eliminar la base de datos vectorial asociada al chat
+        chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+        if os.path.exists(chat_db_path):
+            try:
+                shutil.rmtree(chat_db_path)
+                logger.info(f"Base vectorial del chat {chat_id} eliminada: {chat_db_path}", "app.delete_chat")
+            except Exception as e:
+                logger.error(f"Error al eliminar base vectorial del chat {chat_id}: {str(e)}", "app.delete_chat")
+
+        # Limpiar sesión si es el chat actual
         if session.get('chat_id') == chat_id:
             session.pop('chat_id', None)
             session.pop('file_hashes', None)
 
+        # Verificar si quedan chats
         remaining_chats = [
             name for name in os.listdir(DATA_DIR)
             if name.startswith(f"{user_id}_") and name.endswith('.json')
@@ -2053,6 +2451,7 @@ with app.app_context():
     db.create_all()
     ensure_user_type_consistency()
     backfill_missing_default_prompts()
+    migrate_vectorstores_to_chat_system()
 
 @app.route('/chat-stream', methods=['POST'])
 @login_required
