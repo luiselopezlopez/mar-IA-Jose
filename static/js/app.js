@@ -1486,8 +1486,14 @@ document.addEventListener('DOMContentLoaded', function() {
             file: file,
             processImages: processImages,
             status: 'pending',
-            logs: []
+            logs: [],
+            progressId: null,
+            progressPoller: null,
+            progressState: null,
+            lastProgressMessage: null
         };
+
+        queueItem.progressId = queueItem.id;
 
         // Añadir a la cola
         uploadQueue.push(queueItem);
@@ -1541,6 +1547,150 @@ document.addEventListener('DOMContentLoaded', function() {
         processAndUploadFile(queueItem);
     }
 
+    function stopUploadProgressWatcher(queueItem) {
+        if (!queueItem) return;
+        if (queueItem.progressPoller) {
+            clearInterval(queueItem.progressPoller);
+            queueItem.progressPoller = null;
+        }
+    }
+
+    function fetchUploadProgressOnce(queueItem, { forceUpdate = false } = {}) {
+        if (!queueItem || !queueItem.progressId) {
+            return Promise.resolve();
+        }
+
+        return fetch(`/api/upload/progress/${encodeURIComponent(queueItem.progressId)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (!data || !data.found || !data.progress) {
+                    return;
+                }
+                handleUploadProgressUpdate(queueItem, data.progress, { forceUpdate });
+            })
+            .catch(error => {
+                console.debug('Upload progress poll error:', error);
+            });
+    }
+
+    function startUploadProgressWatcher(queueItem) {
+        if (!queueItem || !queueItem.progressId) {
+            return;
+        }
+
+        stopUploadProgressWatcher(queueItem);
+
+        // Obtener un estado inicial inmediatamente
+        fetchUploadProgressOnce(queueItem);
+
+        queueItem.progressPoller = setInterval(() => {
+            fetchUploadProgressOnce(queueItem);
+        }, 5000);
+    }
+
+    function getProgressMessage(progress, queueItem) {
+        if (!progress) {
+            return '';
+        }
+
+        const attempt = progress.attempt ? Number(progress.attempt) : null;
+        const wait = progress.waiting_seconds ? Number(progress.waiting_seconds) : 0;
+        const fileName = queueItem?.file?.name || progress.filename || 'archivo';
+        const attemptLabel = attempt && attempt > 0 ? ` (intento ${attempt})` : '';
+
+        switch (progress.status) {
+            case 'queued':
+                return `"${fileName}" en cola. Preparando procesamiento…`;
+            case 'document_loaded':
+                return `Contenido de "${fileName}" cargado. Analizando texto…`;
+            case 'chunking':
+                return `Dividiendo "${fileName}" en fragmentos…`;
+            case 'vectorizing':
+            case 'starting':
+                return `Generando embeddings para "${fileName}"${attemptLabel}…`;
+            case 'processing':
+                return `Generando embeddings para "${fileName}"${attemptLabel}…`;
+            case 'rate_limited':
+                if (wait > 0) {
+                    return `Límite de peticiones alcanzado${attemptLabel}. Nuevo intento en ${wait} s…`;
+                }
+                return `Límite de peticiones alcanzado${attemptLabel}. Reintentando…`;
+            case 'reintentando':
+                return `Reintentando generación de embeddings${attemptLabel}…`;
+            case 'completed':
+                return `Embeddings generados correctamente para "${fileName}".`;
+            case 'failed':
+                return `Error procesando "${fileName}": ${progress.error || 'revisa los registros.'}`;
+            default:
+                return '';
+        }
+    }
+
+    function getProgressStatusLabel(progress) {
+        if (!progress) {
+            return '';
+        }
+
+        switch (progress.status) {
+            case 'queued':
+                return 'En cola';
+            case 'document_loaded':
+                return 'Documento cargado';
+            case 'chunking':
+                return 'Preparando fragmentos';
+            case 'vectorizing':
+            case 'starting':
+            case 'processing':
+                return 'Generando embeddings';
+            case 'rate_limited':
+                return 'Esperando reintento';
+            case 'reintentando':
+                return 'Reintentando';
+            case 'completed':
+                return 'Completado';
+            case 'failed':
+                return 'Error';
+            default:
+                return '';
+        }
+    }
+
+    function handleUploadProgressUpdate(queueItem, progress, { forceUpdate = false } = {}) {
+        if (!queueItem || !progress) {
+            return;
+        }
+
+        const previousProgress = queueItem.progressState;
+        const previousStatus = previousProgress ? previousProgress.status : null;
+        queueItem.progressState = progress;
+
+        const message = getProgressMessage(progress, queueItem);
+        const shouldLog = forceUpdate || (message && message !== queueItem.lastProgressMessage);
+        const shouldRefreshStatus = forceUpdate || previousStatus !== progress.status;
+
+        if (shouldLog) {
+            if (message) {
+                addProcessingLog(queueItem, message);
+                queueItem.lastProgressMessage = message;
+                if (queueItem.status === 'processing') {
+                    uploadStatus.textContent = message;
+                }
+            }
+            updateQueueDisplay();
+        } else if (progress.status === 'rate_limited' && queueItem.status === 'processing') {
+            // Mantener actualizado el estado visible aunque no haya nuevo log
+            uploadStatus.textContent = message || uploadStatus.textContent;
+        }
+
+        if (shouldRefreshStatus && !shouldLog) {
+            updateQueueDisplay();
+        }
+
+        if (progress.completed) {
+            stopUploadProgressWatcher(queueItem);
+        }
+    }
+
     // Función para procesar y subir el archivo
     function processAndUploadFile(queueItem) {
         const file = queueItem.file;
@@ -1549,9 +1699,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('process_images', processImages);
+        if (queueItem.progressId) {
+            formData.append('upload_id', queueItem.progressId);
+        }
 
         addProcessingLog(queueItem, `Subiendo archivo "${file.name}"...`);
         updateQueueDisplay();
+
+        startUploadProgressWatcher(queueItem);
 
         fetch('/api/upload', {
             method: 'POST',
@@ -1559,6 +1714,10 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(response => response.json())
         .then(data => {
+            if (data && data.progress_id && !queueItem.progressId) {
+                queueItem.progressId = data.progress_id;
+            }
+
             if (data.success) {
                 // Actualizar estado
                 queueItem.status = 'completed';
@@ -1571,11 +1730,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 uploadStatus.textContent = data.message || `Archivo ${file.name} procesado correctamente`;
+                stopUploadProgressWatcher(queueItem);
+                fetchUploadProgressOnce(queueItem, { forceUpdate: true });
             } else {
                 // Marcar como error
                 queueItem.status = 'error';
                 addProcessingLog(queueItem, `Error al procesar el archivo: ${data.error || 'Error desconocido'}`);
                 uploadStatus.textContent = `Error al subir ${file.name}: ${data.error}`;
+                stopUploadProgressWatcher(queueItem);
+                fetchUploadProgressOnce(queueItem, { forceUpdate: true });
             }
 
             // Actualizar la visualización
@@ -1597,6 +1760,8 @@ document.addEventListener('DOMContentLoaded', function() {
             queueItem.status = 'error';
             addProcessingLog(queueItem, `Error al procesar el archivo: ${error.message || 'Error de conexión'}`);
             uploadStatus.textContent = `Error al subir el archivo ${file.name}.`;
+            stopUploadProgressWatcher(queueItem);
+            fetchUploadProgressOnce(queueItem, { forceUpdate: true });
 
             // Actualizar la visualización
             updateQueueDisplay();
@@ -1896,23 +2061,34 @@ document.addEventListener('DOMContentLoaded', function() {
             const fileStatus = document.createElement('div');
             fileStatus.className = 'queue-item-status';
 
-            switch (item.status) {
-                case 'pending':
-                    fileStatus.textContent = 'Pendiente';
-                    break;
-                case 'processing':
-                    fileStatus.textContent = 'Procesando...';
-                    break;
-                case 'completed':
-                    fileStatus.textContent = 'Completado';
-                    break;
-                case 'error':
-                    fileStatus.textContent = 'Error';
-                    break;
+            const progress = item.progressState;
+            let statusText = '';
+
+            if (item.status === 'processing' && progress) {
+                statusText = getProgressStatusLabel(progress) || 'Procesando...';
+            } else if (item.status === 'completed') {
+                statusText = 'Completado';
+            } else if (item.status === 'error') {
+                statusText = 'Error';
+            } else if (item.status === 'pending') {
+                statusText = 'Pendiente';
             }
+
+            if (!statusText) {
+                statusText = 'Procesando...';
+            }
+
+            fileStatus.textContent = statusText;
 
             fileInfo.appendChild(fileName);
             fileInfo.appendChild(fileStatus);
+
+            if (item.lastProgressMessage) {
+                const progressDetail = document.createElement('div');
+                progressDetail.className = 'queue-item-progress-message';
+                progressDetail.textContent = item.lastProgressMessage;
+                fileInfo.appendChild(progressDetail);
+            }
 
             // Botón para mostrar/ocultar logs
             const toggleLogsBtn = document.createElement('button');
