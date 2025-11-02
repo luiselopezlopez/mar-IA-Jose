@@ -982,25 +982,57 @@ def add_chunks_to_chat_vectorstore(chat_id, new_chunks, progress_id=None):
         progress_id: ID para seguimiento del progreso
     """
     chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
-    
+    index_path = os.path.join(chat_db_path, "index.faiss")
+    metadata_path = os.path.join(chat_db_path, "index.pkl")
+    has_valid_vectorstore = os.path.exists(index_path) and os.path.exists(metadata_path)
+
     set_embedding_progress(progress_id, status="vectorizing", attempt=0, waiting_seconds=0, completed=False)
     
     try:
-        if os.path.exists(chat_db_path):
-            # Cargar base vectorial existente y añadir nuevos chunks
-            logger.debug(f"Cargando base vectorial existente para chat {chat_id}", "app.add_chunks_to_chat_vectorstore")
-            vectorstore = FAISS.load_local(chat_db_path, embeddings, allow_dangerous_deserialization=True)
-            
-            # Crear vectorstore temporal con los nuevos chunks
-            logger.debug(f"Añadiendo {len(new_chunks)} nuevos chunks a la base vectorial", "app.add_chunks_to_chat_vectorstore")
+        if os.path.exists(chat_db_path) and not has_valid_vectorstore:
+            logger.warning(
+                f"La carpeta del chat {chat_id} existe pero los archivos de índice faltan. Se recreará la base vectorial.",
+                "app.add_chunks_to_chat_vectorstore",
+            )
+            shutil.rmtree(chat_db_path, ignore_errors=True)
+            os.makedirs(chat_db_path, exist_ok=True)
+            has_valid_vectorstore = False
+
+        vectorstore = None
+        if has_valid_vectorstore:
+            logger.debug(
+                f"Cargando base vectorial existente para chat {chat_id}",
+                "app.add_chunks_to_chat_vectorstore",
+            )
+            try:
+                vectorstore = FAISS.load_local(
+                    chat_db_path,
+                    embeddings,
+                    allow_dangerous_deserialization=True,
+                )
+            except Exception as load_error:
+                logger.warning(
+                    f"No se pudo cargar la base vectorial existente para el chat {chat_id}: {load_error}. Se recreará.",
+                    "app.add_chunks_to_chat_vectorstore",
+                )
+                shutil.rmtree(chat_db_path, ignore_errors=True)
+                os.makedirs(chat_db_path, exist_ok=True)
+                vectorstore = None
+
+        if vectorstore is not None:
+            logger.debug(
+                f"Añadiendo {len(new_chunks)} nuevos chunks a la base vectorial",
+                "app.add_chunks_to_chat_vectorstore",
+            )
             new_vectorstore = build_vectorstore_with_retry(new_chunks, embeddings, progress_id=progress_id)
-            
-            # Combinar con la base existente
             vectorstore.merge_from(new_vectorstore)
         else:
-            # Crear nueva base vectorial
-            logger.debug(f"Creando nueva base vectorial para chat {chat_id}", "app.add_chunks_to_chat_vectorstore")
-            os.makedirs(chat_db_path, exist_ok=True)
+            logger.debug(
+                f"Creando nueva base vectorial para chat {chat_id}",
+                "app.add_chunks_to_chat_vectorstore",
+            )
+            if not os.path.exists(chat_db_path):
+                os.makedirs(chat_db_path, exist_ok=True)
             vectorstore = build_vectorstore_with_retry(new_chunks, embeddings, progress_id=progress_id)
         
         # Guardar la base vectorial actualizada
