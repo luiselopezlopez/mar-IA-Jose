@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const ragTopKInput = document.getElementById('rag-top-k');
     const temperatureInput = document.getElementById('temperature-input');
     const cameraBtn = document.getElementById('camera-btn');
+    const downloadConversationBtn = document.getElementById('download-conversation-btn');
     const helpBtn = document.getElementById('help-btn');
     const DEFAULT_SYSTEM_PROMPT_TEXT = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas.";
     const savedPromptsSelect = document.getElementById('saved-prompts-select');
@@ -1119,31 +1120,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (messages.length === 0) {
                 showWelcomeMessage();
             } else {
-                const fragment = document.createDocumentFragment();
-
                 messages.forEach(msg => {
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = `message ${msg.role}-message`;
-
-                    let formattedContent = '';
-
-                    if (Array.isArray(msg.content)) {
-                        msg.content.forEach(item => {
-                            if (item.type === 'text') {
-                                formattedContent += formatContent(item.text);
-                            } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
-                                formattedContent += `<img src="${item.image_url.url}" alt="Imagen adjunta" style="max-width: 100%; height: auto; margin: 10px 0;">`;
-                            }
-                        });
-                    } else {
-                        formattedContent = formatContent(msg.content);
-                    }
-
-                    messageDiv.innerHTML = formattedContent;
-                    fragment.appendChild(messageDiv);
+                    const options = {
+                        rawContent: typeof msg.content === 'string' ? msg.content : null,
+                        suppressScroll: true
+                    };
+                    addMessageToChat(msg.role, msg.content, options);
                 });
-
-                chatMessages.appendChild(fragment);
             }
 
             if (window.MathJax) {
@@ -1167,42 +1150,304 @@ document.addEventListener('DOMContentLoaded', function() {
     // Función para limpiar los mensajes del chat
     function clearChatMessages() {
         chatMessages.innerHTML = '';
-    }    // Función para añadir un mensaje al chat (optimizada para mensajes individuales)
-    function addMessageToChat(role, content) {
+    }
+
+    function prepareMessageData(content, rawContent) {
+        let displayContent = '';
+
+        if (Array.isArray(content)) {
+            displayContent = content;
+        } else if (typeof content === 'string') {
+            displayContent = content;
+        } else if (typeof rawContent === 'string') {
+            displayContent = rawContent;
+        }
+
+        let rawForExport = '';
+
+        if (typeof rawContent === 'string' && rawContent.trim()) {
+            rawForExport = rawContent;
+        } else if (typeof content === 'string') {
+            rawForExport = content;
+        } else if (Array.isArray(content)) {
+            rawForExport = content
+                .map(item => (item && item.type === 'text' && typeof item.text === 'string') ? item.text : '')
+                .filter(Boolean)
+                .join('\n')
+                .trim();
+        }
+
+        return {
+            displayContent,
+            rawForExport
+        };
+    }
+
+    function attachExportButton(messageDiv) {
+        if (!messageDiv || messageDiv.querySelector('.message-toolbar')) {
+            return;
+        }
+
+        const toolbar = document.createElement('div');
+        toolbar.className = 'message-toolbar';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'export-word-btn';
+        button.title = 'Exportar mensaje como Word';
+        button.setAttribute('aria-label', 'Exportar mensaje como Word');
+        button.innerText = '📄';
+
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            exportMessageAsWord(messageDiv);
+        });
+
+        toolbar.appendChild(button);
+        messageDiv.insertBefore(toolbar, messageDiv.firstChild);
+        messageDiv.classList.add('has-export-action');
+    }
+
+    async function exportMessageAsWord(messageElement) {
+        if (!messageElement) {
+            return;
+        }
+
+        let exportContent = messageElement.__rawContent;
+
+        if (typeof exportContent !== 'string' || !exportContent.trim()) {
+            const body = messageElement.querySelector('.message-body');
+            exportContent = body ? body.innerText : messageElement.innerText;
+        }
+
+        exportContent = exportContent ? exportContent.trim() : '';
+
+        if (!exportContent) {
+            alert('No hay contenido disponible para exportar.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/export_word', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ content: exportContent })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.download_url) {
+                throw new Error(data.error || 'No se pudo generar el documento Word.');
+            }
+
+            window.open(data.download_url, '_blank', 'noopener');
+        } catch (error) {
+            console.error('Error exportando mensaje a Word:', error);
+            alert(error.message || 'No se pudo exportar el mensaje a Word.');
+        }
+    }
+
+    function sanitizeExportContent(rawContent) {
+        if (typeof rawContent !== 'string' || !rawContent.trim()) {
+            return '';
+        }
+
+        let sanitized = rawContent.replace(/<br\s*\/?\>/gi, '\n');
+        sanitized = sanitized.replace(/<img[^>]*>/gi, '');
+        sanitized = sanitized.replace(/<\/(?:p|div)>/gi, '\n');
+        sanitized = sanitized.replace(/&nbsp;/gi, ' ');
+
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = sanitized;
+        sanitized = (tempContainer.textContent || tempContainer.innerText || '').replace(/\u00a0/g, ' ');
+
+        return sanitized.replace(/\r/g, '').trim();
+    }
+
+    function getMessageExportContent(messageElement) {
+        if (!messageElement) {
+            return '(sin contenido)';
+        }
+
+        const rawContent = typeof messageElement.__rawContent === 'string' ? messageElement.__rawContent.trim() : '';
+        let content = sanitizeExportContent(rawContent);
+
+        if (!content) {
+            const body = messageElement.querySelector('.message-body');
+            const bodyText = body ? body.innerText : messageElement.innerText;
+            content = (bodyText || '').replace(/\r/g, '').trim();
+        }
+
+        const imageCount = messageElement.querySelectorAll('img').length;
+        if (imageCount > 0) {
+            const placeholder = imageCount === 1 ? '[Imagen adjunta]' : `[${imageCount} imágenes adjuntas]`;
+            content = content ? `${content}\n\n${placeholder}` : placeholder;
+        }
+
+        if (!content) {
+            return '(sin contenido)';
+        }
+
+        return content.replace(/\n{3,}/g, '\n\n');
+    }
+
+    function getActiveChatTitle() {
+        if (currentChatData && typeof currentChatData.title === 'string' && currentChatData.title.trim()) {
+            return currentChatData.title.trim();
+        }
+
+        const activePreview = document.querySelector('.chat-item.active .chat-preview');
+        if (activePreview && activePreview.textContent) {
+            const candidate = activePreview.textContent.trim();
+            if (candidate) {
+                return candidate;
+            }
+        }
+
+        return '';
+    }
+
+    function buildConversationExportContent() {
+        if (!chatMessages) {
+            return '';
+        }
+
+        const messageNodes = Array.from(chatMessages.querySelectorAll('.message'));
+        if (messageNodes.length === 0) {
+            return '';
+        }
+
+        const lines = [];
+        const conversationTitle = getActiveChatTitle() || 'Conversación';
+        lines.push(`# ${conversationTitle}`);
+        lines.push('');
+        lines.push(`Generado: ${new Date().toLocaleString()}`);
+
+        const systemMessageInput = document.getElementById('system-message-input');
+        const systemMessageValue = (
+            currentChatData && typeof currentChatData.system_message === 'string' && currentChatData.system_message.trim()
+                ? currentChatData.system_message.trim()
+                : (systemMessageInput ? systemMessageInput.value.trim() : '')
+        );
+
+        if (systemMessageValue) {
+            lines.push('');
+            lines.push('## Mensaje del sistema');
+            lines.push('');
+            lines.push(systemMessageValue);
+        }
+
+        lines.push('');
+        lines.push('## Historial');
+        lines.push('');
+
+        const roleLabels = {
+            user: 'Usuario',
+            assistant: 'Asistente',
+            system: 'Sistema',
+            tool: 'Herramienta'
+        };
+
+        messageNodes.forEach((node, index) => {
+            const role = node.dataset.role
+                || (Array.from(node.classList).find(cls => cls.endsWith('-message')) || '').replace('-message', '')
+                || 'mensaje';
+
+            const label = roleLabels[role] || role.charAt(0).toUpperCase() + role.slice(1);
+            const content = getMessageExportContent(node);
+
+            lines.push(`### Mensaje ${index + 1} · ${label}`);
+            lines.push('');
+            lines.push(content);
+            lines.push('');
+        });
+
+        return lines.join('\n').trim();
+    }
+
+    async function exportConversationAsWord() {
+        if (!currentChatId) {
+            alert('Selecciona o crea un chat antes de exportar la conversación.');
+            return;
+        }
+
+        const exportContent = buildConversationExportContent();
+        if (!exportContent) {
+            alert('No hay mensajes disponibles para exportar.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/export_word', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ content: exportContent })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.download_url) {
+                throw new Error(data.error || 'No se pudo generar el documento Word.');
+            }
+
+            window.open(data.download_url, '_blank', 'noopener');
+        } catch (error) {
+            console.error('Error exportando la conversación a Word:', error);
+            alert(error.message || 'No se pudo exportar la conversación.');
+        }
+    }
+
+    // Función para añadir un mensaje al chat (optimizada para mensajes individuales)
+    function addMessageToChat(role, content, options = {}) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}-message`;
+        messageDiv.dataset.role = role;
 
+        const prepared = prepareMessageData(content, options.rawContent);
         let formattedContent = '';
 
-        // Verificar si el contenido es un array (formato multimodal) o texto simple
-        if (Array.isArray(content)) {
-            // Formato multimodal: procesar cada elemento del array
-            content.forEach(item => {
+        if (Array.isArray(prepared.displayContent)) {
+            prepared.displayContent.forEach(item => {
                 if (item.type === 'text') {
-                    // Añadir texto formateado
                     formattedContent += formatContent(item.text);
                 } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
-                    // Añadir imagen
                     formattedContent += `<img src="${item.image_url.url}" alt="Imagen adjunta" style="max-width: 100%; height: auto; margin: 10px 0;">`;
                 }
             });
         } else {
-            // Formato de texto simple: procesar normalmente
-            formattedContent = formatContent(content);
+            formattedContent = formatContent(prepared.displayContent);
         }
 
-        messageDiv.innerHTML = formattedContent;
+        const bodyDiv = document.createElement('div');
+        bodyDiv.className = 'message-body';
+        bodyDiv.innerHTML = formattedContent;
+        messageDiv.appendChild(bodyDiv);
+
+        messageDiv.__rawContent = typeof prepared.rawForExport === 'string' ? prepared.rawForExport.trim() : '';
+
+        if (options.attachExportButton !== false && (role === 'assistant' || role === 'user')) {
+            attachExportButton(messageDiv);
+        }
+
         chatMessages.appendChild(messageDiv);
-        
-        // Actualizar la renderización de MathJax solo para este mensaje específico
+
         if (window.MathJax) {
             window.MathJax.typesetPromise([messageDiv]).catch((err) => {
                 console.error('Error al renderizar LaTeX:', err);
             });
         }
-        
-        scrollToBottom();
-    }// Función para formatear el contenido (código, enlaces, LaTeX, etc.)
+
+        if (!options.suppressScroll) {
+            scrollToBottom();
+        }
+
+        return messageDiv;
+    }
+    // Función para formatear el contenido (código, enlaces, LaTeX, etc.)
     function formatContent(content) {
         // Crear un elemento div para contener el HTML generado
         const div = document.createElement('div');
@@ -1333,6 +1578,21 @@ document.addEventListener('DOMContentLoaded', function() {
         chatInput.value = '';
     }
 
+    function cacheMessage(role, content) {
+        if (!currentChatData || typeof currentChatData !== 'object') {
+            currentChatData = {};
+        }
+
+        if (!Array.isArray(currentChatData.messages)) {
+            currentChatData.messages = [];
+        }
+
+        currentChatData.messages.push({
+            role,
+            content
+        });
+    }
+
     // Función para enviar mensaje al servidor
     function sendMessageToServer(message) {
         // Preparar el contenido del mensaje con imágenes si hay
@@ -1358,12 +1618,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        // Cancelar peticiones anteriores y preparar una nueva
-        cancelActiveChatRequest();
-        activeChatRequestController = new AbortController();
+    // Cancelar peticiones anteriores y preparar una nueva
+    cancelActiveChatRequest();
+    activeChatRequestController = new AbortController();
 
-        // Añadir mensaje del usuario al chat
-        addMessageToChat('user', messageContent);
+    // Añadir mensaje del usuario al chat
+    addMessageToChat('user', messageContent, { rawContent: messageContent });
+    cacheMessage('user', messageContent);
 
         // Mostrar indicador de escritura
         showTypingIndicator();
@@ -1371,6 +1632,13 @@ document.addEventListener('DOMContentLoaded', function() {
         // Obtener el mensaje del sistema personalizado si existe
         const systemMessageInput = document.getElementById('system-message-input');
         const systemMessage = systemMessageInput ? systemMessageInput.value : null;
+
+        if (systemMessageInput) {
+            if (!currentChatData || typeof currentChatData !== 'object') {
+                currentChatData = {};
+            }
+            currentChatData.system_message = systemMessage || '';
+        }
 
         // Obtener parámetros de RAG y generación
         const parsedTopK = ragTopKInput ? parseInt(ragTopKInput.value, 10) : null;
@@ -1417,15 +1685,13 @@ document.addEventListener('DOMContentLoaded', function() {
             hideTypingIndicator();
 
             // Añadir respuesta del asistente
-            addMessageToChat('assistant', data.response);
-
-            // Mostrar link de documento Word si se generó
-            if (data.word_doc && data.word_doc.generated && data.word_doc.download_url) {
-                const linkHtml = `<div class="word-doc-link"><a href="${data.word_doc.download_url}" target="_blank" rel="noopener">📄 Descargar documentación (${data.word_doc.file_name})</a></div>`;
-                addMessageToChat('assistant', linkHtml);
-            } else if (data.word_doc && data.word_doc.error) {
-                console.warn('Error generando Word:', data.word_doc.error);
-            }
+            addMessageToChat('assistant', data.response, {
+                rawContent: data.raw_response
+            });
+            const assistantContent = (typeof data.raw_response === 'string' && data.raw_response.trim())
+                ? data.raw_response
+                : (typeof data.response === 'string' ? data.response : '');
+            cacheMessage('assistant', assistantContent);
 
             // Actualizar ID del chat si es necesario
             if (data.chat_id && (!currentChatId || currentChatId !== data.chat_id)) {
@@ -1440,7 +1706,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             console.error('Error sending message:', error);
             hideTypingIndicator();
-            addMessageToChat('assistant', 'Lo siento, ha ocurrido un error al procesar tu mensaje.');
+            const fallbackMessage = 'Lo siento, ha ocurrido un error al procesar tu mensaje.';
+            addMessageToChat('assistant', fallbackMessage);
+            cacheMessage('assistant', fallbackMessage);
         })
         .finally(() => {
             activeChatRequestController = null;
@@ -2238,6 +2506,13 @@ document.addEventListener('DOMContentLoaded', function() {
     cameraBtn.addEventListener('click', function() {
         openCamera();
     });
+
+    if (downloadConversationBtn) {
+        downloadConversationBtn.addEventListener('click', function(event) {
+            event.preventDefault();
+            exportConversationAsWord();
+        });
+    }
 
     // Event listeners para el panel de archivos
     filesPanelClose.addEventListener('click', function() {

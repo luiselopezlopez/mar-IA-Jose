@@ -45,6 +45,27 @@ body.dark-mode {
     color: #e0e0e0;
 }
 
+.dark-mode .export-word-btn {
+    color: #e0e0e0;
+}
+
+.dark-mode .export-word-btn:hover,
+.dark-mode .export-word-btn:focus {
+    color: #ffffff;
+}
+
+.dark-mode .conversation-export-btn {
+    background-color: #1f2f4a;
+    border-color: #315a9c;
+    color: #e0e0e0;
+}
+
+.dark-mode .conversation-export-btn:hover,
+.dark-mode .conversation-export-btn:focus {
+    background-color: #28426d;
+    border-color: #3a6fbe;
+}
+
 .dark-mode .chat-input-container,
 .dark-mode .file-upload-area {
     background-color: #1e1e1e;

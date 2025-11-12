@@ -158,6 +158,9 @@ body {
 .message {
     margin-bottom: 20px;
     max-width: 80%;
+    display: flex;
+    flex-direction: column;
+    position: relative;
 }
 
 .user-message {
@@ -173,6 +176,34 @@ body {
     background-color: #f0f0f0;
     padding: 10px 15px;
     border-radius: 15px 15px 15px 0;
+}
+
+.message-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.export-word-btn {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 2px;
+    transition: transform 0.15s ease;
+    color: inherit;
+}
+
+.export-word-btn:hover,
+.export-word-btn:focus {
+    transform: scale(1.1);
+    outline: none;
+}
+
+.message-body {
+    word-break: break-word;
 }
 
 .file-upload-area {
@@ -259,6 +290,22 @@ body {
 
 .toolbar-btn:hover {
     background-color: #e0e0e0;
+}
+
+.conversation-export-btn {
+    background-color: #e8f0fe;
+    border-color: #a7c0f2;
+    color: #0d47a1;
+}
+
+.conversation-export-btn:hover,
+.conversation-export-btn:focus {
+    background-color: #d2e3fc;
+    border-color: #8ba7e1;
+}
+
+.conversation-export-btn i {
+    font-size: 1rem;
 }
 
 .model-select {

@@ -1,5 +1,4 @@
 import os
-import re as _re  # Para limpiar etiquetas [WORD_DOC]
 import uuid
 import json
 import io
@@ -23,102 +22,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import AzureOpenAIEmbeddings
 from dotenv import load_dotenv
 from models import db, User, Chat, Message, File, UserPrompt
-from doc_export import procesar_respuesta  # Nuevo: exportación automática a Word
-
-# Utilidad para limpiar marcadores [WORD_DOC] del texto mostrado al usuario
-def clean_word_doc_markers(text):
-    if not isinstance(text, str):
-        return text
-    try:
-        cleaned = _re.sub(r"\[WORD_DOC\]", "", text)
-        cleaned = _re.sub(r"\[/WORD_DOC\]", "", cleaned)
-        return cleaned.strip()
-    except Exception as e:
-        logger.error(f"Error limpiando marcadores WORD_DOC: {e}", "app.clean_word_doc_markers")
-        return text
-
-# Detección heurística de intención de generar documento Word
-def detect_word_doc_intent(message: str):
-    """Detecta si el usuario está solicitando explícitamente la generación de un documento.
-
-    Devuelve (bool, list[str]) indicando si hay intención y las razones activadas.
-    """
-    reasons = []
-    if not isinstance(message, str) or not message.strip():
-        return False, reasons
-    text = message.lower()
-    # Eliminamos etiquetas HTML simples para evitar ruido
-    text = _re.sub(r"<[^>]+>", " ", text)
-
-    # Disparadores explícitos (tokens manuales)
-    explicit_tokens = ["!doc", "/doc", "[doc]", "<doc>"]
-    for tok in explicit_tokens:
-        if tok in text:
-            reasons.append(f"token:{tok}")
-            return True, reasons
-
-    keywords = [
-        # Español
-        "documento", "word", "docx", "informe", "especificación", "especificacion", "reporte",
-        "memoria", "documentación", "documentacion", "plantilla", "propuesta", "resumen ejecutivo",
-        "especificaciones", "ficha técnica", "ficha tecnica", "manual", "guía", "guia", "acta",
-        "acta de reunión", "minuta", "cronograma", "análisis", "analisis", "caso de uso", "casos de uso",
-        # Inglés
-        "document", "report", "spec", "specification", "proposal", "whitepaper", "design doc", "design document",
-        "requirements", "requirement document", "architecture document", "manual", "guide", "playbook", "runbook"
-    ]
-    verbs = [
-        # Español
-        "genera", "generar", "crear", "crea", "elabora", "elaborar", "redacta", "redactar", "haz", "produce", "producir", "monta", "construye",
-        # Inglés
-        "generate", "create", "build", "produce", "draft", "write", "compose", "prepare"
-    ]
-
-    # Señales directas: combinación verbo + palabra clave
-    for v in verbs:
-        for k in keywords:
-            if f"{v} un {k}" in text or f"{v} una {k}" in text or f"{v} el {k}" in text or f"{v} a {k}" in text or f"{v} {k}" in text:
-                reasons.append(f"combo:{v}+{k}")
-                return True, reasons
-
-    # Palabras clave aisladas acompañadas de formato deseado o verbos
-    keyword_hit = [k for k in keywords if k in text]
-    verb_hit = [v for v in verbs if v in text]
-    if keyword_hit and verb_hit:
-        reasons.append(f"keywords:{','.join(keyword_hit[:3])}")
-        reasons.append(f"verbs:{','.join(verb_hit[:3])}")
-        return True, reasons
-
-    # Exportación / conversión
-    if any(kw in text for kw in keyword_hit) and ("exporta" in text or "convierte" in text or "en word" in text or "to word" in text):
-        reasons.append("export_convert")
-        return True, reasons
-
-    # Patrones regex generales
-    regex_patterns = [
-        r"genera.+documento", r"crea.+informe", r"elabora.+documento", r"redacta.+especificaci[óo]n",
-        r"(documento|informe|report) completo", r"estructura (del )?(documento|informe|report)", r"plantilla.+(documento|informe|report)",
-        r"create (a )?(detailed )?(design|architecture) document", r"write (the )?spec"
-    ]
-    if any(_re.search(p, text) for p in regex_patterns):
-        reasons.append("regex_pattern")
-        return True, reasons
-
-    # Estructuras solicitadas típicas de documentos
-    structural_cues = [
-        "tabla de contenidos", "table of contents", "índice", "indice", "secciones", "apartados",
-        "table of content", "toc", "outline", "section 1", "section 2"
-    ]
-    if any(cue in text for cue in structural_cues) and keyword_hit:
-        reasons.append("structural_cues")
-        return True, reasons
-
-    # Indicios de formato extenso (pide secciones numeradas)
-    if _re.search(r"secci[óo]n(es)? [1-9]", text) and keyword_hit:
-        reasons.append("section_numbering")
-        return True, reasons
-
-    return False, reasons
+from doc_export import guardar_respuesta_en_word  # Exportación manual a Word
 import fitz  # PyMuPDF
 from PIL import Image
 import numpy as np
@@ -1375,11 +1279,6 @@ def chat():
         # Si no hay imágenes, añadir el mensaje como texto normal
         messages.append({"role": "user", "content": user_message})
 
-    # Detectar intención de documento antes de construir el system prompt
-    intent_detected, intent_reasons = detect_word_doc_intent(user_message)
-    if env_level == 'development':
-        logger.debug(f"Intent detection: detected={intent_detected} reasons={intent_reasons}", "app.chat.intent")
-
     # Realizar RAG usando la base vectorial del chat
     context = ""
     relevant_docs = query_documents_for_chat(user_message, chat_id, k=rag_top_k)
@@ -1408,18 +1307,11 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
     elif context:
         system_message = f"{system_message}\n\nAdemás, utiliza la siguiente información de los documentos para responder:\n\n{context}"
 
-    # Si se detectó intención de documento, reforzar instrucciones para forzar bloque [WORD_DOC]
-    if intent_detected:
-        doc_instruction = (
-            "\n\nIMPORTANTE: El usuario solicita un documento formal. Debes responder UNICAMENTE con un "
-            "bloque delimitado por [WORD_DOC] y [/WORD_DOC] que contenga TODO el contenido del documento en Markdown "
-            "estructurado (título principal con #, secciones con ##, listas, tablas si procede, código si es necesario). "
-            "No añadas texto fuera de ese bloque. Incluye una estructura lógica, y si procede un índice opcional al inicio."
-        )
-        system_message += doc_instruction
-    else:
-        # Instrucción ligera siempre presente para que el modelo conozca el mecanismo
-        system_message += "\n\nNOTA: Si el usuario pide explícitamente un documento (informe, especificación, report, proposal) responde usando un único bloque [WORD_DOC] ... [/WORD_DOC] con el documento en Markdown estructurado."
+    # Añadir recordatorio ligero para respuestas estructuradas cuando se soliciten documentos
+    system_message += (
+        "\n\nNOTA: Si el usuario pide explícitamente un documento (informe, especificación, report, proposal) "
+        "responde con un documento completo en Markdown bien estructurado (títulos, secciones, listas, tablas si aplica)."
+    )
 
     # Determinar el deployment a usar
     deployment = model_id if model_id else AZURE_OPENAI_DEPLOYMENT
@@ -1571,57 +1463,45 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
 
     chat_id = save_chat_history(user_id, messages, system_message_to_save, chat_data.get('title'))
 
-    # Fallback: si había intención de documento y el modelo NO devolvió bloque, auto-envolver
-    auto_wrapped = False
-    auto_wrapped_reason = None
-    # Fallback 1: había intención clara pero no bloque
-    if intent_detected and "[WORD_DOC]" not in assistant_message:
-        assistant_message = f"[WORD_DOC]\n{assistant_message.strip()}\n[/WORD_DOC]"
-        auto_wrapped = True
-        auto_wrapped_reason = "intent_detected_no_block"
-        if env_level == 'development':
-            logger.debug("Auto-wrap aplicado (intent_detected_no_block)", "app.chat.autowrap")
-    # Fallback 2: no detectado pero salida parece estructurada tipo documento (varios headings + longitud)
-    if not auto_wrapped and not intent_detected:
-        heading_count = len(_re.findall(r"^#{1,3} ", assistant_message, flags=_re.MULTILINE))
-        if heading_count >= 3 and len(assistant_message) > 400 and "[WORD_DOC]" not in assistant_message:
-            assistant_message = f"[WORD_DOC]\n{assistant_message.strip()}\n[/WORD_DOC]"
-            auto_wrapped = True
-            auto_wrapped_reason = f"structural_heads={heading_count}"
-            if env_level == 'development':
-                logger.debug(f"Auto-wrap aplicado (structural heuristic) heads={heading_count}", "app.chat.autowrap")
-
-    # Mantener copia original (ya con posible auto-wrap) para exportación antes de limpiar
     original_assistant_message = assistant_message
 
-    # Procesar posible bloque de documentación para exportar a Word (usa original)
-    export_info = {}
+    return jsonify({
+        "response": original_assistant_message.strip(),
+        "raw_response": original_assistant_message,
+        "chat_id": chat_id
+    })
+
+
+@app.route('/api/export_word', methods=['POST'])
+@login_required
+def export_word():
+    """Genera un documento Word a partir del contenido enviado por el cliente."""
+    payload = request.get_json(silent=True) or {}
+    content = payload.get('content')
+
+    if not isinstance(content, str):
+        return jsonify({"error": "Contenido inválido"}), 400
+
+    content = content.strip()
+    if not content:
+        return jsonify({"error": "No hay contenido para exportar"}), 400
+
+    output_dir = os.environ.get('WORD_DOC_OUTPUT_DIR', os.path.join('data', 'word_docs'))
+
     try:
-        export_info = procesar_respuesta(original_assistant_message)
-    except Exception as e:
-        logger.error(f"Error procesando exportación Word: {e}", "app.chat")
-        export_info = {"tiene_bloque": False, "error": str(e)}
+        file_path = guardar_respuesta_en_word(content, output_dir)
+    except Exception as exc:  # pragma: no cover - protección adicional
+        logger.error(f"Error generando documento Word: {exc}", "app.export_word")
+        return jsonify({"error": "No se pudo generar el documento Word"}), 500
 
-    # Limpiar tags [WORD_DOC] para mostrar en UI
-    cleaned_response = clean_word_doc_markers(original_assistant_message)
+    file_name = os.path.basename(file_path)
+    download_url = f"/api/word_docs/{file_name}"
 
-    file_path = export_info.get("ruta_archivo") if export_info else None
-    file_name = os.path.basename(file_path) if file_path else None
+    logger.info(f"Documento Word generado bajo demanda: {file_name}", "app.export_word")
 
     return jsonify({
-        "response": cleaned_response.strip(),
-        "chat_id": chat_id,
-        "word_doc": {
-            "generated": export_info.get("tiene_bloque", False),
-            "intent_detected": intent_detected,
-            "intent_reasons": intent_reasons,
-            "auto_wrapped": auto_wrapped,
-            "auto_wrapped_reason": auto_wrapped_reason,
-            "file_path": file_path,
-            "file_name": file_name,
-            "download_url": f"/api/word_docs/{file_name}" if file_name else None,
-            "error": export_info.get("error")
-        }
+        "file_name": file_name,
+        "download_url": download_url
     })
 
 
