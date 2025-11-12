@@ -1435,8 +1435,16 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
     if not is_o1mini:
         api_messages.append({"role": "system", "content": system_message})
     
-    # Añadir historial de conversación (limitado a los últimos 10 mensajes)
-    messages_to_add = messages[-10:]
+    # Obtener límite de historial de mensajes desde la solicitud (por defecto 10, máximo 50)
+    requested_history_limit = data.get('message_history_limit')
+    try:
+        message_history_limit = int(requested_history_limit)
+    except (TypeError, ValueError):
+        message_history_limit = 10
+    message_history_limit = max(1, min(message_history_limit, 50))
+    
+    # Añadir historial de conversación (limitado según el parámetro)
+    messages_to_add = messages[-message_history_limit:]
     
     # Para o1-mini, si hay mensajes de usuario, añadir el contenido del sistema al primer mensaje
     if is_o1mini and messages_to_add and messages_to_add[0]["role"] == "user":

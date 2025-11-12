@@ -1388,6 +1388,13 @@ document.addEventListener('DOMContentLoaded', function() {
             temperatureInput.value = sanitizedTemperature.toFixed(1);
         }
 
+        const messageHistoryLimitInput = document.getElementById('message-history-limit');
+        const parsedHistoryLimit = messageHistoryLimitInput ? parseInt(messageHistoryLimitInput.value, 10) : null;
+        const sanitizedHistoryLimit = Number.isInteger(parsedHistoryLimit) ? Math.min(Math.max(parsedHistoryLimit, 1), 50) : null;
+        if (messageHistoryLimitInput && sanitizedHistoryLimit !== null && sanitizedHistoryLimit !== parsedHistoryLimit) {
+            messageHistoryLimitInput.value = sanitizedHistoryLimit;
+        }
+
         fetch('/api/chat', {
             method: 'POST',
             headers: {
@@ -1400,7 +1407,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 model_id: currentModelId,
                 system_message: systemMessage,
                 rag_top_k: sanitizedTopK,
-                temperature: sanitizedTemperature
+                temperature: sanitizedTemperature,
+                message_history_limit: sanitizedHistoryLimit
             })
         })
         .then(response => response.json())
