@@ -77,6 +77,10 @@ DEFAULT_SYSTEM_PROMPT = (
     "Si no sabes la respuesta, di que no lo sabes. No inventes respuestas."
 )
 
+DEFAULT_RAG_TOP_K = 3
+DEFAULT_TEMPERATURE = 1.0
+DEFAULT_HISTORY_LIMIT = 10
+
 # Modificar la URL de la base de datos para usar la ruta absoluta en INSTANCE_DIR
 database_path = os.path.abspath(os.path.join(INSTANCE_DIR, 'mar-ia-jose.db'))
 # Asegurar que la ruta usa el formato correcto para SQLite (forward slashes)
@@ -329,13 +333,47 @@ def get_user_id():
         logger.debug(f"Creando ID temporal para sesión: {session['user_id']}", "app.get_user_id")
     return session['user_id']
 
-def save_chat_history(user_id, messages, system_message=None, title=None, file_hashes=None):
-    """Guarda el historial de chat en un archivo JSON"""
+def _resolve_int_setting(value, default, minimum=None, maximum=None):
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        resolved = default
+    if minimum is not None:
+        resolved = max(minimum, resolved)
+    if maximum is not None:
+        resolved = min(maximum, resolved)
+    return resolved
+
+def _resolve_float_setting(value, default, minimum=None, maximum=None, precision=None):
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError):
+        resolved = default
+    if minimum is not None:
+        resolved = max(minimum, resolved)
+    if maximum is not None:
+        resolved = min(maximum, resolved)
+    if precision is not None:
+        factor = 10 ** precision
+        resolved = round(resolved * factor) / factor
+    return resolved
+
+def save_chat_history(user_id, messages, system_message=None, title=None, file_hashes=None,
+                      rag_top_k=None, temperature=None, message_history_limit=None):
+    """Guarda el historial de chat y sus parámetros en un archivo JSON."""
     chat_id = session.get('chat_id', str(uuid.uuid4()))
     session['chat_id'] = chat_id
     logger.debug(f"Guardando historial de chat para usuario {user_id}, chat_id: {chat_id}", "app.save_chat_history")
 
     filename = os.path.join(DATA_DIR, f"{user_id}_{chat_id}.json")
+
+    existing_data = {}
+    if os.path.exists(filename):
+        try:
+            with open(filename, 'r', encoding='utf-8') as existing_file:
+                existing_data = json.load(existing_file)
+        except Exception as exc:  # pragma: no cover - resiliencia adicional
+            logger.warning(f"No se pudo leer historial previo para {chat_id}: {exc}", "app.save_chat_history")
 
     # Determinar el título del chat
     if not title and messages:
@@ -351,6 +389,26 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
     if file_hashes is None:
         file_hashes = session.get('file_hashes', [])
 
+    resolved_top_k = _resolve_int_setting(
+        rag_top_k if rag_top_k is not None else existing_data.get('rag_top_k'),
+        DEFAULT_RAG_TOP_K,
+        minimum=1,
+        maximum=20
+    )
+    resolved_temperature = _resolve_float_setting(
+        temperature if temperature is not None else existing_data.get('temperature'),
+        DEFAULT_TEMPERATURE,
+        minimum=0.0,
+        maximum=2.0,
+        precision=1
+    )
+    resolved_history_limit = _resolve_int_setting(
+        message_history_limit if message_history_limit is not None else existing_data.get('message_history_limit'),
+        DEFAULT_HISTORY_LIMIT,
+        minimum=1,
+        maximum=50
+    )
+
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump({
             'chat_id': chat_id,
@@ -358,7 +416,10 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
             'messages': messages,
             'system_message': system_message,
             'title': title,
-            'file_hashes': file_hashes
+            'file_hashes': file_hashes,
+            'rag_top_k': resolved_top_k,
+            'temperature': resolved_temperature,
+            'message_history_limit': resolved_history_limit
         }, f, ensure_ascii=False, indent=2)
     
     logger.info(f"Chat guardado: {title[:30]}... (ID: {chat_id})", "app.save_chat_history")
@@ -382,7 +443,15 @@ def create_new_chat_session(user_id, system_message=None, title=None):
     session['chat_id'] = chat_id
     session['file_hashes'] = []
 
-    save_chat_history(user_id, [], resolved_system_message, resolved_title)
+    save_chat_history(
+        user_id,
+        [],
+        resolved_system_message,
+        resolved_title,
+        rag_top_k=DEFAULT_RAG_TOP_K,
+        temperature=DEFAULT_TEMPERATURE,
+        message_history_limit=DEFAULT_HISTORY_LIMIT
+    )
 
     return {
         "chat_id": chat_id,
@@ -411,9 +480,31 @@ def get_chat_data(user_id, chat_id):
         if os.path.exists(filename):
             with open(filename, 'r', encoding='utf-8') as f:
                 logger.debug(f"Cargando datos de chat: {chat_id}", "app.get_chat_data")
-                return json.load(f)    # Si no hay chat_id o no existe el archivo, devolver un diccionario vacío
+                data = json.load(f)
+
+            if not isinstance(data, dict):
+                data = {}
+
+            data['messages'] = data.get('messages', [])
+            data['system_message'] = data.get('system_message')
+            data['title'] = data.get('title')
+            data['file_hashes'] = data.get('file_hashes', [])
+            data['rag_top_k'] = _resolve_int_setting(data.get('rag_top_k'), DEFAULT_RAG_TOP_K, minimum=1, maximum=20)
+            data['temperature'] = _resolve_float_setting(data.get('temperature'), DEFAULT_TEMPERATURE, minimum=0.0, maximum=2.0, precision=1)
+            data['message_history_limit'] = _resolve_int_setting(data.get('message_history_limit'), DEFAULT_HISTORY_LIMIT, minimum=1, maximum=50)
+
+            return data
     logger.debug(f"No se encontró chat con ID: {chat_id}", "app.get_chat_data")
-    return {"messages": [], "system_message": None, "title": None, "file_hashes": []}
+    return {
+        "messages": [],
+        "system_message": None,
+        "title": None,
+        "file_hashes": [],
+        "rag_top_k": DEFAULT_RAG_TOP_K,
+        "temperature": DEFAULT_TEMPERATURE,
+        "message_history_limit": DEFAULT_HISTORY_LIMIT,
+        "timestamp": None
+    }
 
 def get_user_chats(user_id):
     """Obtiene la lista de chats del usuario"""
@@ -1180,7 +1271,15 @@ def index():
         # Inicializar file_hashes vacíos para el nuevo chat
         session['file_hashes'] = []
         # Crear un nuevo chat con título predeterminado
-        save_chat_history(user_id, [], None, "Nueva conversación")
+        save_chat_history(
+            user_id,
+            [],
+            None,
+            "Nueva conversación",
+            rag_top_k=DEFAULT_RAG_TOP_K,
+            temperature=DEFAULT_TEMPERATURE,
+            message_history_limit=DEFAULT_HISTORY_LIMIT
+        )
         # Actualizar la lista de chats
         chats = get_user_chats(user_id)
 
@@ -1199,25 +1298,19 @@ def chat():
 
     user_id = get_user_id()
 
-    # Configuración dinámica de RAG y temperatura
-    try:
-        rag_top_k = int(requested_top_k)
-    except (TypeError, ValueError):
-        rag_top_k = 3
-    rag_top_k = max(1, min(rag_top_k, 20))
-
-    try:
-        generation_temperature = float(requested_temperature)
-    except (TypeError, ValueError):
-        generation_temperature = 1.0
-    generation_temperature = max(0.0, min(generation_temperature, 2.0))
-
     # Cargar historial de chat existente o crear uno nuevo
     messages = load_chat_history(user_id, chat_id)
 
     # Obtener datos completos del chat para acceder al mensaje del sistema guardado
     chat_data = get_chat_data(user_id, chat_id)
     saved_system_message = chat_data.get('system_message')
+    stored_top_k = chat_data.get('rag_top_k', DEFAULT_RAG_TOP_K)
+    stored_temperature = chat_data.get('temperature', DEFAULT_TEMPERATURE)
+    stored_history_limit = chat_data.get('message_history_limit', DEFAULT_HISTORY_LIMIT)
+
+    rag_top_k = _resolve_int_setting(requested_top_k, stored_top_k, minimum=1, maximum=20)
+    generation_temperature = _resolve_float_setting(requested_temperature, stored_temperature, minimum=0.0, maximum=2.0, precision=1)
+    message_history_limit = _resolve_int_setting(data.get('message_history_limit'), stored_history_limit, minimum=1, maximum=50)
     
     # Usar los file_hashes específicos del chat actual
     file_hashes = chat_data.get('file_hashes', [])
@@ -1327,15 +1420,7 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
     if not is_o1mini:
         api_messages.append({"role": "system", "content": system_message})
     
-    # Obtener límite de historial de mensajes desde la solicitud (por defecto 10, máximo 50)
-    requested_history_limit = data.get('message_history_limit')
-    try:
-        message_history_limit = int(requested_history_limit)
-    except (TypeError, ValueError):
-        message_history_limit = 10
-    message_history_limit = max(1, min(message_history_limit, 50))
-    
-    # Añadir historial de conversación (limitado según el parámetro)
+    # Añadir historial de conversación limitado por la configuración activa
     messages_to_add = messages[-message_history_limit:]
     
     # Para o1-mini, si hay mensajes de usuario, añadir el contenido del sistema al primer mensaje
@@ -1461,7 +1546,16 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
     else:
         system_message_to_save = saved_system_message
 
-    chat_id = save_chat_history(user_id, messages, system_message_to_save, chat_data.get('title'))
+    chat_id = save_chat_history(
+        user_id,
+        messages,
+        system_message_to_save,
+        chat_data.get('title'),
+        file_hashes=file_hashes,
+        rag_top_k=rag_top_k,
+        temperature=generation_temperature,
+        message_history_limit=message_history_limit
+    )
 
     original_assistant_message = assistant_message
 
@@ -1558,7 +1652,10 @@ def get_chat(chat_id):
             current_messages, 
             current_chat_data.get('system_message'), 
             current_chat_data.get('title'),
-            session.get('file_hashes', [])
+            session.get('file_hashes', []),
+            rag_top_k=current_chat_data.get('rag_top_k'),
+            temperature=current_chat_data.get('temperature'),
+            message_history_limit=current_chat_data.get('message_history_limit')
         )
         logger.debug(f"Guardado estado del chat actual {current_chat_id} antes de cambiar", "app.get_chat")
     
@@ -1578,7 +1675,10 @@ def get_chat(chat_id):
         'messages': messages,
         'system_message': chat_data.get('system_message'),
         'title': chat_data.get('title'),
-        'file_hashes': chat_data.get('file_hashes', [])
+        'file_hashes': chat_data.get('file_hashes', []),
+        'rag_top_k': chat_data.get('rag_top_k', DEFAULT_RAG_TOP_K),
+        'temperature': chat_data.get('temperature', DEFAULT_TEMPERATURE),
+        'message_history_limit': chat_data.get('message_history_limit', DEFAULT_HISTORY_LIMIT)
     })
 
 @app.route('/api/upload', methods=['POST'])
@@ -1631,7 +1731,10 @@ def upload_file():
                 chat_data.get('messages', []), 
                 chat_data.get('system_message'), 
                 chat_data.get('title'),
-                session['file_hashes']
+                session['file_hashes'],
+                rag_top_k=chat_data.get('rag_top_k'),
+                temperature=chat_data.get('temperature'),
+                message_history_limit=chat_data.get('message_history_limit')
             )
             logger.debug(f"Chat {chat_id} actualizado con nuevo archivo: {filename}", "app.upload_file")
             
@@ -1714,7 +1817,10 @@ def new_chat():
             current_messages, 
             current_chat_data.get('system_message'), 
             current_chat_data.get('title'),
-            session.get('file_hashes', [])
+            session.get('file_hashes', []),
+            rag_top_k=current_chat_data.get('rag_top_k'),
+            temperature=current_chat_data.get('temperature'),
+            message_history_limit=current_chat_data.get('message_history_limit')
         )
         logger.debug(f"Guardado estado del chat actual {current_chat_id} antes de crear uno nuevo", "app.new_chat")
     
@@ -1772,7 +1878,10 @@ def delete_file(file_hash):
             chat_data.get('messages', []), 
             chat_data.get('system_message'), 
             chat_data.get('title'),
-            file_hashes
+            file_hashes,
+            rag_top_k=chat_data.get('rag_top_k'),
+            temperature=chat_data.get('temperature'),
+            message_history_limit=chat_data.get('message_history_limit')
         )
         logger.debug(f"Chat {chat_id} actualizado tras eliminar archivo {file_hash}", "app.delete_file")
 
@@ -2317,7 +2426,10 @@ def update_system_message(chat_id):
         chat_data.get('messages', []), 
         system_message, 
         chat_data.get('title'), 
-        chat_data.get('file_hashes', [])
+        chat_data.get('file_hashes', []),
+        rag_top_k=chat_data.get('rag_top_k'),
+        temperature=chat_data.get('temperature'),
+        message_history_limit=chat_data.get('message_history_limit')
     )
 
     # Si es el chat actual, actualizar también la sesión
@@ -2348,7 +2460,10 @@ def update_chat_title(chat_id):
         chat_data.get('messages', []), 
         chat_data.get('system_message'), 
         title, 
-        chat_data.get('file_hashes', [])
+        chat_data.get('file_hashes', []),
+        rag_top_k=chat_data.get('rag_top_k'),
+        temperature=chat_data.get('temperature'),
+        message_history_limit=chat_data.get('message_history_limit')
     )
 
     return jsonify({"success": True, "chat_id": chat_id})

@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const modelSelect = document.getElementById('model-select');
     const ragTopKInput = document.getElementById('rag-top-k');
     const temperatureInput = document.getElementById('temperature-input');
+    const messageHistoryLimitInput = document.getElementById('message-history-limit');
     const cameraBtn = document.getElementById('camera-btn');
     const downloadConversationBtn = document.getElementById('download-conversation-btn');
     const helpBtn = document.getElementById('help-btn');
@@ -42,6 +43,68 @@ document.addEventListener('DOMContentLoaded', function() {
     const adminResetTargetName = document.getElementById('admin-reset-target-name');
     const adminResetCancelBtn = document.getElementById('admin-reset-password-cancel');
     const currentUserIsAdmin = document.body && document.body.dataset ? document.body.dataset.isAdmin === 'true' : false;
+
+    const DEFAULT_RAG_TOP_K = (() => {
+        if (!ragTopKInput) {
+            return 3;
+        }
+        const initial = ragTopKInput.defaultValue || ragTopKInput.getAttribute('value') || ragTopKInput.value;
+        const parsed = parseInt(initial, 10);
+        if (!Number.isFinite(parsed)) {
+            return 3;
+        }
+        return Math.min(Math.max(parsed, 1), 20);
+    })();
+
+    const DEFAULT_TEMPERATURE = (() => {
+        if (!temperatureInput) {
+            return 1.0;
+        }
+        const initial = temperatureInput.defaultValue || temperatureInput.getAttribute('value') || temperatureInput.value;
+        const parsed = parseFloat(initial);
+        if (!Number.isFinite(parsed)) {
+            return 1.0;
+        }
+        const clamped = Math.min(Math.max(parsed, 0), 2);
+        return Math.round(clamped * 10) / 10;
+    })();
+
+    const DEFAULT_HISTORY_LIMIT = (() => {
+        if (!messageHistoryLimitInput) {
+            return 10;
+        }
+        const initial = messageHistoryLimitInput.defaultValue || messageHistoryLimitInput.getAttribute('value') || messageHistoryLimitInput.value;
+        const parsed = parseInt(initial, 10);
+        if (!Number.isFinite(parsed)) {
+            return 10;
+        }
+        return Math.min(Math.max(parsed, 1), 50);
+    })();
+
+    function normalizeTopK(value) {
+        const parsed = parseInt(value, 10);
+        if (!Number.isFinite(parsed)) {
+            return DEFAULT_RAG_TOP_K;
+        }
+        return Math.min(Math.max(parsed, 1), 20);
+    }
+
+    function normalizeTemperature(value) {
+        const parsed = parseFloat(value);
+        if (!Number.isFinite(parsed)) {
+            return DEFAULT_TEMPERATURE;
+        }
+        const clamped = Math.min(Math.max(parsed, 0), 2);
+        return Math.round(clamped * 10) / 10;
+    }
+
+    function normalizeHistoryLimit(value) {
+        const parsed = parseInt(value, 10);
+        if (!Number.isFinite(parsed)) {
+            return DEFAULT_HISTORY_LIMIT;
+        }
+        return Math.min(Math.max(parsed, 1), 50);
+    }
 
     if (changePasswordSubmitBtn && !changePasswordSubmitBtn.dataset.originalText) {
         changePasswordSubmitBtn.dataset.originalText = changePasswordSubmitBtn.textContent;
@@ -932,9 +995,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 systemMessageInput.value = defaultPromptText;
             }
 
+            if (ragTopKInput) {
+                ragTopKInput.value = DEFAULT_RAG_TOP_K;
+            }
+
+            if (temperatureInput) {
+                temperatureInput.value = DEFAULT_TEMPERATURE.toFixed(1);
+            }
+
+            if (messageHistoryLimitInput) {
+                messageHistoryLimitInput.value = DEFAULT_HISTORY_LIMIT;
+            }
+
             currentChatData = {
                 messages: [],
-                system_message: defaultPromptText
+                system_message: defaultPromptText,
+                rag_top_k: DEFAULT_RAG_TOP_K,
+                temperature: DEFAULT_TEMPERATURE,
+                message_history_limit: DEFAULT_HISTORY_LIMIT
             };
 
             clearChatMessages();
@@ -1114,6 +1192,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 systemMessageInput.value = nextSystemPrompt;
                 setSystemPromptsFeedback('');
             }
+
+            const resolvedTopK = normalizeTopK(data.rag_top_k);
+            if (ragTopKInput) {
+                ragTopKInput.value = resolvedTopK;
+            }
+
+            const resolvedTemperature = normalizeTemperature(data.temperature);
+            if (temperatureInput) {
+                temperatureInput.value = resolvedTemperature.toFixed(1);
+            }
+
+            const resolvedHistoryLimit = normalizeHistoryLimit(data.message_history_limit);
+            if (messageHistoryLimitInput) {
+                messageHistoryLimitInput.value = resolvedHistoryLimit;
+            }
+
+            currentChatData.rag_top_k = resolvedTopK;
+            currentChatData.temperature = resolvedTemperature;
+            currentChatData.message_history_limit = resolvedHistoryLimit;
 
             const messages = data.messages || data;
 
@@ -1641,27 +1738,30 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // Obtener parámetros de RAG y generación
-        const parsedTopK = ragTopKInput ? parseInt(ragTopKInput.value, 10) : null;
-        const sanitizedTopK = Number.isFinite(parsedTopK) ? Math.min(Math.max(parsedTopK, 1), 20) : null;
-        if (ragTopKInput && sanitizedTopK !== null && sanitizedTopK !== parsedTopK) {
-            ragTopKInput.value = sanitizedTopK;
+        const normalizedTopK = ragTopKInput ? normalizeTopK(ragTopKInput.value) : DEFAULT_RAG_TOP_K;
+        if (ragTopKInput && ragTopKInput.value !== String(normalizedTopK)) {
+            ragTopKInput.value = normalizedTopK;
         }
 
-        const parsedTemperature = temperatureInput ? parseFloat(temperatureInput.value) : null;
-        let sanitizedTemperature = Number.isFinite(parsedTemperature) ? Math.min(Math.max(parsedTemperature, 0), 2) : null;
-        if (sanitizedTemperature !== null) {
-            sanitizedTemperature = Math.round(sanitizedTemperature * 10) / 10;
-        }
-        if (temperatureInput && sanitizedTemperature !== null && sanitizedTemperature !== parsedTemperature) {
-            temperatureInput.value = sanitizedTemperature.toFixed(1);
+        const normalizedTemperature = temperatureInput ? normalizeTemperature(temperatureInput.value) : DEFAULT_TEMPERATURE;
+        if (temperatureInput) {
+            const formattedTemperature = normalizedTemperature.toFixed(1);
+            if (temperatureInput.value !== formattedTemperature) {
+                temperatureInput.value = formattedTemperature;
+            }
         }
 
-        const messageHistoryLimitInput = document.getElementById('message-history-limit');
-        const parsedHistoryLimit = messageHistoryLimitInput ? parseInt(messageHistoryLimitInput.value, 10) : null;
-        const sanitizedHistoryLimit = Number.isInteger(parsedHistoryLimit) ? Math.min(Math.max(parsedHistoryLimit, 1), 50) : null;
-        if (messageHistoryLimitInput && sanitizedHistoryLimit !== null && sanitizedHistoryLimit !== parsedHistoryLimit) {
-            messageHistoryLimitInput.value = sanitizedHistoryLimit;
+        const normalizedHistoryLimit = messageHistoryLimitInput ? normalizeHistoryLimit(messageHistoryLimitInput.value) : DEFAULT_HISTORY_LIMIT;
+        if (messageHistoryLimitInput && messageHistoryLimitInput.value !== String(normalizedHistoryLimit)) {
+            messageHistoryLimitInput.value = normalizedHistoryLimit;
         }
+
+        if (!currentChatData || typeof currentChatData !== 'object') {
+            currentChatData = {};
+        }
+        currentChatData.rag_top_k = normalizedTopK;
+        currentChatData.temperature = normalizedTemperature;
+        currentChatData.message_history_limit = normalizedHistoryLimit;
 
         fetch('/api/chat', {
             method: 'POST',
@@ -1674,9 +1774,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 chat_id: currentChatId,
                 model_id: currentModelId,
                 system_message: systemMessage,
-                rag_top_k: sanitizedTopK,
-                temperature: sanitizedTemperature,
-                message_history_limit: sanitizedHistoryLimit
+                rag_top_k: normalizedTopK,
+                temperature: normalizedTemperature,
+                message_history_limit: normalizedHistoryLimit
             })
         })
         .then(response => response.json())
