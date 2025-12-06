@@ -116,6 +116,10 @@
                             <!-- Los modelos se cargarán dinámicamente -->
                         </select>
                         <button id="system-message-btn" class="system-message-btn">⚙️ Mensaje del Sistema</button>
+                        <button id="knowledge-base-btn" class="toolbar-btn knowledge-base-btn" title="Guardar o asociar bases RAG">
+                            <i class="fas fa-database" aria-hidden="true"></i>
+                            <span>Gestionar RAG</span>
+                        </button>
                     </div>
                     <div class="rag-settings-group">
                         <label for="rag-top-k">Top K:</label>
@@ -184,6 +188,39 @@
             <div class="modal-footer">
                 <button id="save-system-message-btn" class="primary-btn">Aplicar</button>
                 <button class="cancel-btn modal-close">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para gestionar bases RAG -->
+    <div class="modal" id="knowledge-base-modal" role="dialog" aria-modal="true" aria-labelledby="knowledge-base-title">
+        <div class="modal-content knowledge-base-modal-content">
+            <div class="modal-header">
+                <h3 id="knowledge-base-title">Bases RAG guardadas</h3>
+                <button class="modal-close" type="button" aria-label="Cerrar">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="knowledge-base-description">Guarda la base vectorial del chat actual o asocia bases existentes para reutilizar su contexto en cualquier conversación.</p>
+                <div class="knowledge-base-form">
+                    <label for="knowledge-base-name">Nombre de la base</label>
+                    <div class="knowledge-base-form-row">
+                        <input type="text" id="knowledge-base-name" placeholder="Ej. Informe de ventas Q1" maxlength="80" autocomplete="off">
+                        <button id="save-knowledge-base-btn" type="button" class="primary-btn">Guardar base</button>
+                    </div>
+                </div>
+                <div id="knowledge-base-feedback" class="knowledge-base-feedback" role="status" aria-live="polite"></div>
+                <div class="knowledge-base-list-section">
+                    <div class="knowledge-base-list-header">
+                        <span>Mis bases guardadas</span>
+                        <small>Asocia una base para añadirla al contexto del chat.</small>
+                    </div>
+                    <div id="knowledge-base-list" class="knowledge-base-list" role="list">
+                        <p class="knowledge-base-empty">Aún no has guardado bases RAG.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel-btn" type="button" data-role="close-knowledge-base">Cerrar</button>
             </div>
         </div>
     </div>

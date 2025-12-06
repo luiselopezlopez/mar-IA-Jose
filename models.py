@@ -97,3 +97,21 @@ class UserPrompt(db.Model):
 
     def __repr__(self):
         return f'<UserPrompt {self.name}>'
+
+
+class KnowledgeBase(db.Model):
+    """Representa una base de conocimiento RAG persistida por el usuario."""
+
+    __tablename__ = 'knowledge_bases'
+
+    id = db.Column(db.String(36), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    name = db.Column(db.String(150), nullable=False)
+    vectorstore_path = db.Column(db.String(255), nullable=False)
+    source_chat_id = db.Column(db.String(36), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('knowledge_bases', lazy='dynamic', cascade='all, delete-orphan'))
+
+    def __repr__(self):
+        return f'<KnowledgeBase {self.name} for user {self.user_id}>'

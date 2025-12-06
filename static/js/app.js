@@ -13,6 +13,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const cameraBtn = document.getElementById('camera-btn');
     const downloadConversationBtn = document.getElementById('download-conversation-btn');
     const helpBtn = document.getElementById('help-btn');
+    const knowledgeBaseBtn = document.getElementById('knowledge-base-btn');
+    const knowledgeBaseModal = document.getElementById('knowledge-base-modal');
+    const knowledgeBaseNameInput = document.getElementById('knowledge-base-name');
+    const saveKnowledgeBaseBtn = document.getElementById('save-knowledge-base-btn');
+    const knowledgeBaseList = document.getElementById('knowledge-base-list');
+    const knowledgeBaseFeedback = document.getElementById('knowledge-base-feedback');
     const DEFAULT_SYSTEM_PROMPT_TEXT = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas.";
     const savedPromptsSelect = document.getElementById('saved-prompts-select');
     const storeSystemPromptBtn = document.getElementById('store-system-prompt-btn');
@@ -129,6 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let savedPromptsCache = [];
     let adminUsersState = { users: [], totalAdmins: 0 };
     let adminResetTargetId = null;
+    let attachedKnowledgeBases = [];
 
     // Cola de procesamiento de archivos
     let uploadQueue = [];
@@ -286,6 +293,239 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (adminResetPasswordInput) {
             setTimeout(() => adminResetPasswordInput.focus(), 50);
+        }
+    }
+
+    function setKnowledgeBaseFeedback(message, type = 'info') {
+        if (!knowledgeBaseFeedback) {
+            return;
+        }
+
+        knowledgeBaseFeedback.textContent = message || '';
+        knowledgeBaseFeedback.classList.remove('error', 'success');
+
+        if (type === 'error') {
+            knowledgeBaseFeedback.classList.add('error');
+        } else if (type === 'success') {
+            knowledgeBaseFeedback.classList.add('success');
+        }
+    }
+
+    function openKnowledgeBaseModal() {
+        if (!knowledgeBaseModal) {
+            return;
+        }
+
+        if (!currentChatId) {
+            setKnowledgeBaseFeedback('Crea o selecciona un chat antes de guardar una base RAG.', 'error');
+            return;
+        }
+
+        knowledgeBaseModal.classList.add('open');
+        knowledgeBaseModal.setAttribute('aria-hidden', 'false');
+        setKnowledgeBaseFeedback('');
+
+        if (knowledgeBaseNameInput) {
+            knowledgeBaseNameInput.value = '';
+            setTimeout(() => knowledgeBaseNameInput.focus(), 50);
+        }
+
+        loadKnowledgeBasesForChat();
+    }
+
+    function closeKnowledgeBaseModal() {
+        if (!knowledgeBaseModal) {
+            return;
+        }
+
+        knowledgeBaseModal.classList.remove('open');
+        knowledgeBaseModal.setAttribute('aria-hidden', 'true');
+    }
+
+    async function loadKnowledgeBasesForChat() {
+        if (!currentChatId || !knowledgeBaseList) {
+            return;
+        }
+
+        setKnowledgeBaseFeedback('Cargando bases guardadas…', 'info');
+        knowledgeBaseList.innerHTML = '<p class="knowledge-base-empty">Cargando información…</p>';
+
+        try {
+            const response = await fetch(`/api/chat/${currentChatId}/knowledge_bases`);
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(data.error || 'No se pudo obtener la lista de bases RAG.');
+            }
+
+            const bases = Array.isArray(data.knowledge_bases) ? data.knowledge_bases : [];
+            attachedKnowledgeBases = Array.isArray(data.attached_bases) ? data.attached_bases : [];
+
+            if (currentChatData) {
+                currentChatData.attached_bases = [...attachedKnowledgeBases];
+            }
+
+            renderKnowledgeBaseList(bases);
+            setKnowledgeBaseFeedback(bases.length ? '' : 'No hay bases guardadas todavía. Guarda la base actual para reutilizarla.', 'info');
+        } catch (error) {
+            console.error('Error loading knowledge bases:', error);
+            knowledgeBaseList.innerHTML = '<p class="knowledge-base-empty">No se pudieron cargar las bases guardadas.</p>';
+            setKnowledgeBaseFeedback(error.message || 'Error al cargar las bases guardadas.', 'error');
+        } finally {
+            updateKnowledgeBaseButtonState();
+        }
+    }
+
+    function renderKnowledgeBaseList(bases) {
+        if (!knowledgeBaseList) {
+            return;
+        }
+
+        knowledgeBaseList.innerHTML = '';
+
+        if (!bases.length) {
+            knowledgeBaseList.innerHTML = '<p class="knowledge-base-empty">No hay bases guardadas.</p>';
+            return;
+        }
+
+        bases.forEach(base => {
+            const item = document.createElement('div');
+            item.className = 'knowledge-base-item';
+            if (base.attached) {
+                item.classList.add('attached');
+            }
+
+            const details = document.createElement('div');
+            details.className = 'knowledge-base-details';
+
+            const title = document.createElement('strong');
+            title.textContent = base.name;
+            details.appendChild(title);
+
+            const meta = document.createElement('div');
+            meta.className = 'knowledge-base-meta';
+            meta.textContent = base.created_at ? `Guardado el ${formatDate(base.created_at)}` : '';
+            details.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'knowledge-base-actions';
+
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'primary-btn knowledge-base-toggle-btn';
+            toggleBtn.textContent = base.attached ? 'Desasociar' : 'Asociar';
+            toggleBtn.addEventListener('click', () => toggleKnowledgeBaseAttachment(base.id, !base.attached));
+            actions.appendChild(toggleBtn);
+
+            item.appendChild(details);
+            item.appendChild(actions);
+            knowledgeBaseList.appendChild(item);
+        });
+    }
+
+    async function toggleKnowledgeBaseAttachment(kbId, shouldAttach) {
+        if (!currentChatId) {
+            return;
+        }
+
+        setKnowledgeBaseFeedback(shouldAttach ? 'Asociando base…' : 'Desasociando base…', 'info');
+
+        try {
+            const response = await fetch(`/api/chat/${currentChatId}/knowledge_bases/${kbId}`, {
+                method: shouldAttach ? 'POST' : 'DELETE'
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'No se pudo actualizar la asociación.');
+            }
+
+            attachedKnowledgeBases = Array.isArray(data.attached_bases) ? data.attached_bases : [];
+            if (currentChatData) {
+                currentChatData.attached_bases = [...attachedKnowledgeBases];
+            }
+
+            await loadKnowledgeBasesForChat();
+            setKnowledgeBaseFeedback('Asociaciones actualizadas.', 'success');
+        } catch (error) {
+            console.error('Error updating knowledge base attachment:', error);
+            setKnowledgeBaseFeedback(error.message || 'No se pudo actualizar la asociación.', 'error');
+        } finally {
+            updateKnowledgeBaseButtonState();
+        }
+    }
+
+    async function handleSaveKnowledgeBase(event) {
+        if (event) {
+            event.preventDefault();
+        }
+
+        if (!currentChatId) {
+            setKnowledgeBaseFeedback('Selecciona un chat antes de guardar su base RAG.', 'error');
+            return;
+        }
+
+        if (!knowledgeBaseNameInput) {
+            return;
+        }
+
+        const name = knowledgeBaseNameInput.value.trim();
+        if (!name) {
+            setKnowledgeBaseFeedback('Introduce un nombre para la base.', 'error');
+            return;
+        }
+
+        setKnowledgeBaseFeedback('Guardando base…', 'info');
+        if (saveKnowledgeBaseBtn) {
+            saveKnowledgeBaseBtn.disabled = true;
+        }
+
+        try {
+            const response = await fetch('/api/knowledge_bases', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name,
+                    chat_id: currentChatId
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'No se pudo guardar la base RAG.');
+            }
+
+            knowledgeBaseNameInput.value = '';
+            setKnowledgeBaseFeedback('Base guardada correctamente.', 'success');
+            await loadKnowledgeBasesForChat();
+        } catch (error) {
+            console.error('Error saving knowledge base:', error);
+            setKnowledgeBaseFeedback(error.message || 'No se pudo guardar la base.', 'error');
+        } finally {
+            if (saveKnowledgeBaseBtn) {
+                saveKnowledgeBaseBtn.disabled = false;
+            }
+        }
+    }
+
+    function updateKnowledgeBaseButtonState() {
+        if (!knowledgeBaseBtn) {
+            return;
+        }
+
+        const defaultLabel = knowledgeBaseBtn.dataset.defaultLabel || knowledgeBaseBtn.textContent || 'Guardar RAG';
+        if (!knowledgeBaseBtn.dataset.defaultLabel) {
+            knowledgeBaseBtn.dataset.defaultLabel = defaultLabel;
+        }
+
+        const count = Array.isArray(attachedKnowledgeBases) ? attachedKnowledgeBases.length : 0;
+        if (count > 0) {
+            knowledgeBaseBtn.classList.add('has-attachments');
+            knowledgeBaseBtn.textContent = `${defaultLabel} (${count})`;
+        } else {
+            knowledgeBaseBtn.classList.remove('has-attachments');
+            knowledgeBaseBtn.textContent = defaultLabel;
         }
     }
 
@@ -1012,8 +1252,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 system_message: defaultPromptText,
                 rag_top_k: DEFAULT_RAG_TOP_K,
                 temperature: DEFAULT_TEMPERATURE,
-                message_history_limit: DEFAULT_HISTORY_LIMIT
+                message_history_limit: DEFAULT_HISTORY_LIMIT,
+                attached_bases: []
             };
+
+            attachedKnowledgeBases = [];
+            updateKnowledgeBaseButtonState();
 
             clearChatMessages();
             clearChatInputState();
@@ -1179,6 +1423,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = await response.json();
             currentChatId = chatId;
             currentChatData = data;
+            attachedKnowledgeBases = Array.isArray(data.attached_bases) ? data.attached_bases : [];
+            currentChatData.attached_bases = attachedKnowledgeBases;
+            updateKnowledgeBaseButtonState();
 
             const loadingIndicator = document.getElementById('chat-loading-indicator');
             if (loadingIndicator) {
@@ -2656,6 +2903,29 @@ document.addEventListener('DOMContentLoaded', function() {
         // Actualizar la visualización de la cola
         updateQueueDisplay();
     });
+
+    if (knowledgeBaseBtn) {
+        knowledgeBaseBtn.addEventListener('click', function() {
+            if (knowledgeBaseModal && knowledgeBaseModal.classList.contains('open')) {
+                closeKnowledgeBaseModal();
+            } else {
+                openKnowledgeBaseModal();
+            }
+        });
+    }
+
+    if (knowledgeBaseModal) {
+        const kbCloseButtons = knowledgeBaseModal.querySelectorAll('.modal-close, [data-role="close-knowledge-base"]');
+        kbCloseButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                closeKnowledgeBaseModal();
+            });
+        });
+    }
+
+    if (saveKnowledgeBaseBtn) {
+        saveKnowledgeBaseBtn.addEventListener('click', handleSaveKnowledgeBase);
+    }
 
     // Función para actualizar el texto del botón de cola según el estado del panel
     function updateQueueToggleButtonText() {

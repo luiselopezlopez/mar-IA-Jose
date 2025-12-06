@@ -21,7 +21,7 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2t
 from langchain_community.vectorstores import FAISS
 from langchain_openai import AzureOpenAIEmbeddings
 from dotenv import load_dotenv
-from models import db, User, Chat, Message, File, UserPrompt
+from models import db, User, Chat, Message, File, UserPrompt, KnowledgeBase
 from doc_export import guardar_respuesta_en_word  # Exportación manual a Word
 import fitz  # PyMuPDF
 from PIL import Image
@@ -62,6 +62,8 @@ INSTANCE_DIR = os.environ.get('INSTANCE_DIR', os.path.join('data', 'instance'))
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(VECTORDB_DIR, exist_ok=True)
+KNOWLEDGE_BASE_DIR = os.path.join(VECTORDB_DIR, 'knowledge_bases')
+os.makedirs(KNOWLEDGE_BASE_DIR, exist_ok=True)
 os.makedirs(INSTANCE_DIR, exist_ok=True)
 logger.info(f"Directorios configurados: DATA_DIR={DATA_DIR}, UPLOAD_DIR={UPLOAD_DIR}, VECTORDB_DIR={VECTORDB_DIR}, INSTANCE_DIR={INSTANCE_DIR}", "app.warmup")
 
@@ -359,7 +361,8 @@ def _resolve_float_setting(value, default, minimum=None, maximum=None, precision
     return resolved
 
 def save_chat_history(user_id, messages, system_message=None, title=None, file_hashes=None,
-                      rag_top_k=None, temperature=None, message_history_limit=None):
+                      rag_top_k=None, temperature=None, message_history_limit=None,
+                      attached_bases=None):
     """Guarda el historial de chat y sus parámetros en un archivo JSON."""
     chat_id = session.get('chat_id', str(uuid.uuid4()))
     session['chat_id'] = chat_id
@@ -385,9 +388,14 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
     if not title:
         title = 'Nueva conversación'
 
-    # Usar los file_hashes proporcionados o los de la sesión actual
+    # Usar los file_hashes y knowledge bases proporcionados o los de la sesión actual
     if file_hashes is None:
         file_hashes = session.get('file_hashes', [])
+    if attached_bases is None:
+        attached_bases = session.get('attached_bases', [])
+
+    file_hashes = list(file_hashes or [])
+    attached_bases = list(attached_bases or [])
 
     resolved_top_k = _resolve_int_setting(
         rag_top_k if rag_top_k is not None else existing_data.get('rag_top_k'),
@@ -419,10 +427,12 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
             'file_hashes': file_hashes,
             'rag_top_k': resolved_top_k,
             'temperature': resolved_temperature,
-            'message_history_limit': resolved_history_limit
+            'message_history_limit': resolved_history_limit,
+            'attached_bases': attached_bases
         }, f, ensure_ascii=False, indent=2)
     
     logger.info(f"Chat guardado: {title[:30]}... (ID: {chat_id})", "app.save_chat_history")
+    session['attached_bases'] = attached_bases
     return chat_id
 
 
@@ -442,6 +452,7 @@ def create_new_chat_session(user_id, system_message=None, title=None):
     chat_id = str(uuid.uuid4())
     session['chat_id'] = chat_id
     session['file_hashes'] = []
+    session['attached_bases'] = []
 
     save_chat_history(
         user_id,
@@ -450,7 +461,8 @@ def create_new_chat_session(user_id, system_message=None, title=None):
         resolved_title,
         rag_top_k=DEFAULT_RAG_TOP_K,
         temperature=DEFAULT_TEMPERATURE,
-        message_history_limit=DEFAULT_HISTORY_LIMIT
+        message_history_limit=DEFAULT_HISTORY_LIMIT,
+        attached_bases=[]
     )
 
     return {
@@ -489,17 +501,22 @@ def get_chat_data(user_id, chat_id):
             data['system_message'] = data.get('system_message')
             data['title'] = data.get('title')
             data['file_hashes'] = data.get('file_hashes', [])
+            data['attached_bases'] = data.get('attached_bases', [])
             data['rag_top_k'] = _resolve_int_setting(data.get('rag_top_k'), DEFAULT_RAG_TOP_K, minimum=1, maximum=20)
             data['temperature'] = _resolve_float_setting(data.get('temperature'), DEFAULT_TEMPERATURE, minimum=0.0, maximum=2.0, precision=1)
             data['message_history_limit'] = _resolve_int_setting(data.get('message_history_limit'), DEFAULT_HISTORY_LIMIT, minimum=1, maximum=50)
 
+            session['attached_bases'] = data['attached_bases']
+
             return data
     logger.debug(f"No se encontró chat con ID: {chat_id}", "app.get_chat_data")
+    session['attached_bases'] = []
     return {
         "messages": [],
         "system_message": None,
         "title": None,
         "file_hashes": [],
+        "attached_bases": [],
         "rag_top_k": DEFAULT_RAG_TOP_K,
         "temperature": DEFAULT_TEMPERATURE,
         "message_history_limit": DEFAULT_HISTORY_LIMIT,
@@ -526,6 +543,39 @@ def get_user_chats(user_id):
     # Ordenar por timestamp, más reciente primero
     chats.sort(key=lambda x: x['timestamp'], reverse=True)
     return chats
+
+
+def _persist_attached_bases(user_id, chat_id, chat_data, attached_bases):
+    """Actualiza el historial del chat con la lista de bases RAG asociadas."""
+
+    chat_id = save_chat_history(
+        user_id,
+        chat_data.get('messages', []),
+        chat_data.get('system_message'),
+        chat_data.get('title'),
+        chat_data.get('file_hashes', []),
+        rag_top_k=chat_data.get('rag_top_k'),
+        temperature=chat_data.get('temperature'),
+        message_history_limit=chat_data.get('message_history_limit'),
+        attached_bases=list(attached_bases or [])
+    )
+
+    if session.get('chat_id') == chat_id:
+        session['attached_bases'] = list(attached_bases or [])
+
+    return chat_id
+
+
+def serialize_knowledge_base(kb, attached=False):
+    """Convierte una base de conocimiento en un dict listo para JSON."""
+
+    return {
+        "id": kb.id,
+        "name": kb.name,
+        "created_at": kb.created_at.isoformat() if kb.created_at else None,
+        "attached": attached,
+        "source_chat_id": kb.source_chat_id,
+    }
 
 
 def ensure_default_user_prompt(user_id, commit=False):
@@ -961,82 +1011,140 @@ def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=N
         # Añadir chunks a la base vectorial del chat
         add_chunks_to_chat_vectorstore(chat_id, chunks, progress_id)
 
-        return file_hash, len(chunks)
+        return file_hash, len(chunks), chunks
     except Exception as e:
         # Capturar errores específicos y proporcionar un mensaje más descriptivo
         set_embedding_progress(progress_id, status="failed", completed=True, error=str(e))
         raise ValueError(f"Error al procesar el archivo: {str(e)}")
 
 
-def add_chunks_to_chat_vectorstore(chat_id, new_chunks, progress_id=None):
-    """Añade chunks a la base vectorial específica del chat
-    
-    Args:
-        chat_id: ID del chat
-        new_chunks: Lista de chunks a añadir
-        progress_id: ID para seguimiento del progreso
-    """
-    chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
-    index_path = os.path.join(chat_db_path, "index.faiss")
-    metadata_path = os.path.join(chat_db_path, "index.pkl")
+def _add_chunks_to_vectorstore(store_path, new_chunks, *, progress_id=None, context_label="chat", log_source="app.add_chunks_to_vectorstore"):
+    """Añade documentos a una carpeta FAISS concreta, creando o fusionando según corresponda."""
+    index_path = os.path.join(store_path, "index.faiss")
+    metadata_path = os.path.join(store_path, "index.pkl")
     has_valid_vectorstore = os.path.exists(index_path) and os.path.exists(metadata_path)
 
     set_embedding_progress(progress_id, status="vectorizing", attempt=0, waiting_seconds=0, completed=False)
-    
+
     try:
-        if os.path.exists(chat_db_path) and not has_valid_vectorstore:
+        if os.path.exists(store_path) and not has_valid_vectorstore:
             logger.warning(
-                f"La carpeta del chat {chat_id} existe pero los archivos de índice faltan. Se recreará la base vectorial.",
-                "app.add_chunks_to_chat_vectorstore",
+                f"La carpeta de {context_label} existe pero los archivos de índice faltan. Se recreará la base vectorial.",
+                log_source,
             )
-            shutil.rmtree(chat_db_path, ignore_errors=True)
-            os.makedirs(chat_db_path, exist_ok=True)
+            shutil.rmtree(store_path, ignore_errors=True)
+            os.makedirs(store_path, exist_ok=True)
             has_valid_vectorstore = False
 
         vectorstore = None
         if has_valid_vectorstore:
             logger.debug(
-                f"Cargando base vectorial existente para chat {chat_id}",
-                "app.add_chunks_to_chat_vectorstore",
+                f"Cargando base vectorial existente para {context_label}",
+                log_source,
             )
             try:
                 vectorstore = FAISS.load_local(
-                    chat_db_path,
+                    store_path,
                     embeddings,
                     allow_dangerous_deserialization=True,
                 )
             except Exception as load_error:
                 logger.warning(
-                    f"No se pudo cargar la base vectorial existente para el chat {chat_id}: {load_error}. Se recreará.",
-                    "app.add_chunks_to_chat_vectorstore",
+                    f"No se pudo cargar la base vectorial existente para {context_label}: {load_error}. Se recreará.",
+                    log_source,
                 )
-                shutil.rmtree(chat_db_path, ignore_errors=True)
-                os.makedirs(chat_db_path, exist_ok=True)
+                shutil.rmtree(store_path, ignore_errors=True)
+                os.makedirs(store_path, exist_ok=True)
                 vectorstore = None
 
         if vectorstore is not None:
             logger.debug(
-                f"Añadiendo {len(new_chunks)} nuevos chunks a la base vectorial",
-                "app.add_chunks_to_chat_vectorstore",
+                f"Añadiendo {len(new_chunks)} nuevos chunks a la base vectorial de {context_label}",
+                log_source,
             )
             new_vectorstore = build_vectorstore_with_retry(new_chunks, embeddings, progress_id=progress_id)
             vectorstore.merge_from(new_vectorstore)
         else:
             logger.debug(
-                f"Creando nueva base vectorial para chat {chat_id}",
-                "app.add_chunks_to_chat_vectorstore",
+                f"Creando nueva base vectorial para {context_label}",
+                log_source,
             )
-            if not os.path.exists(chat_db_path):
-                os.makedirs(chat_db_path, exist_ok=True)
+            if not os.path.exists(store_path):
+                os.makedirs(store_path, exist_ok=True)
             vectorstore = build_vectorstore_with_retry(new_chunks, embeddings, progress_id=progress_id)
-        
-        # Guardar la base vectorial actualizada
-        vectorstore.save_local(chat_db_path)
-        logger.info(f"Base vectorial del chat {chat_id} actualizada con {len(new_chunks)} chunks", "app.add_chunks_to_chat_vectorstore")
-        
+
+        vectorstore.save_local(store_path)
+        logger.info(
+            f"Base vectorial de {context_label} actualizada con {len(new_chunks)} chunks",
+            log_source,
+        )
+
     except Exception as e:
-        logger.error(f"Error al actualizar base vectorial del chat {chat_id}: {str(e)}", "app.add_chunks_to_chat_vectorstore")
+        logger.error(f"Error al actualizar base vectorial de {context_label}: {str(e)}", log_source)
         raise
+
+
+def add_chunks_to_chat_vectorstore(chat_id, new_chunks, progress_id=None):
+    """Añade chunks a la base vectorial específica del chat."""
+    chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+    _add_chunks_to_vectorstore(
+        chat_db_path,
+        new_chunks,
+        progress_id=progress_id,
+        context_label=f"chat {chat_id}",
+        log_source="app.add_chunks_to_chat_vectorstore",
+    )
+
+
+def _resolve_vectorstore_path(path_fragment: str | None) -> str | None:
+    if not path_fragment:
+        return None
+    if os.path.isabs(path_fragment):
+        return path_fragment
+    return os.path.join(VECTORDB_DIR, path_fragment)
+
+
+def extend_attached_knowledge_bases(user_id, attached_ids, new_chunks):
+    """Añade nuevos documentos a todas las bases RAG asociadas al chat actual."""
+    if not attached_ids or not new_chunks:
+        return
+
+    ids = list(dict.fromkeys(attached_ids))
+    if not ids:
+        return
+
+    bases = (
+        KnowledgeBase.query.filter(
+            KnowledgeBase.user_id == user_id,
+            KnowledgeBase.id.in_(ids)
+        ).all()
+    )
+
+    if not bases:
+        return
+
+    for kb in bases:
+        store_path = _resolve_vectorstore_path(kb.vectorstore_path)
+        if not store_path:
+            logger.warning(
+                f"La base RAG '{kb.name}' ({kb.id}) no tiene una ruta válida. Se omite la actualización.",
+                "app.extend_attached_knowledge_bases",
+            )
+            continue
+
+        try:
+            _add_chunks_to_vectorstore(
+                store_path,
+                new_chunks,
+                progress_id=None,
+                context_label=f"base RAG '{kb.name}'",
+                log_source="app.extend_attached_knowledge_bases",
+            )
+        except Exception as exc:
+            logger.error(
+                f"Error al ampliar la base RAG '{kb.name}' ({kb.id}): {exc}",
+                "app.extend_attached_knowledge_bases",
+            )
 
 
 def rebuild_chat_vectorstore(chat_id, file_hashes_to_keep, progress_id=None):
@@ -1096,39 +1204,55 @@ def rebuild_chat_vectorstore(chat_id, file_hashes_to_keep, progress_id=None):
         logger.error(f"Error al reconstruir base vectorial del chat {chat_id}: {str(e)}", "app.rebuild_chat_vectorstore")
         raise
 
-def query_documents_for_chat(query, chat_id, k=3):
-    """Consulta documentos relevantes para RAG desde la base vectorial específica del chat
-    
-    Args:
-        query: Consulta a realizar
-        chat_id: ID del chat para buscar en su base vectorial
-        k: Número de documentos relevantes a devolver
-    
-    Returns:
-        list: Lista de documentos relevantes
-    """
-    if not chat_id:
+def query_documents_for_chat(query, chat_id, k=3, user_id=None, extra_base_ids=None):
+    """Consulta documentos relevantes de las bases vectoriales del chat y bases guardadas anexadas."""
+    if not (chat_id or extra_base_ids):
         return []
 
-    chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
-    
-    if not os.path.exists(chat_db_path):
-        logger.debug(f"No existe base vectorial para el chat {chat_id}", "app.query_documents_for_chat")
+    vector_paths = []
+    if chat_id:
+        chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+        if os.path.exists(chat_db_path):
+            vector_paths.append(chat_db_path)
+        else:
+            logger.debug(f"No existe base vectorial para el chat {chat_id}", "app.query_documents_for_chat")
+
+    if extra_base_ids and user_id:
+        for kb_id in extra_base_ids:
+            kb = KnowledgeBase.query.filter_by(id=kb_id, user_id=user_id).first()
+            if not kb:
+                continue
+            kb_path = os.path.join(VECTORDB_DIR, kb.vectorstore_path)
+            if os.path.exists(kb_path):
+                vector_paths.append(kb_path)
+
+    if not vector_paths:
         return []
 
-    try:
-        # Cargar la base vectorial del chat
-        vectorstore = FAISS.load_local(chat_db_path, embeddings, allow_dangerous_deserialization=True)
-        
-        # Realizar búsqueda de similitud
-        docs = vectorstore.similarity_search(query, k=k)
-        
-        logger.debug(f"Encontrados {len(docs)} documentos relevantes para el chat {chat_id}", "app.query_documents_for_chat")
-        return docs
-        
-    except Exception as e:
-        logger.error(f"Error al consultar documentos del chat {chat_id}: {str(e)}", "app.query_documents_for_chat")
+    results = []
+    for path in vector_paths:
+        try:
+            vectorstore = FAISS.load_local(
+                path,
+                embeddings,
+                allow_dangerous_deserialization=True,
+            )
+            results.extend(vectorstore.similarity_search(query, k=k))
+        except Exception as exc:
+            logger.warning(
+                f"No se pudo consultar la base vectorial en {path}: {exc}",
+                "app.query_documents_for_chat_warn"
+            )
+
+    if not results:
         return []
+
+    sorted_results = sorted(results, key=lambda doc: doc.metadata.get('score', 0), reverse=True)
+    logger.debug(
+        f"Encontrados {len(sorted_results)} documentos combinados para el chat {chat_id}",
+        "app.query_documents_for_chat"
+    )
+    return sorted_results[:k]
 
 
 # Mantener función legacy para compatibilidad con código existente
@@ -1262,6 +1386,7 @@ def index():
         # Cargar los file_hashes específicos del chat
         chat_data = get_chat_data(user_id, chat_id)
         session['file_hashes'] = chat_data.get('file_hashes', [])
+        session['attached_bases'] = chat_data.get('attached_bases', [])
         logger.debug(f"Cargando file_hashes para chat inicial: {len(session['file_hashes'])} archivos", "app.index")
     else:
         # No hay chats existentes, crear uno nuevo
@@ -1270,6 +1395,7 @@ def index():
         session['chat_id'] = chat_id
         # Inicializar file_hashes vacíos para el nuevo chat
         session['file_hashes'] = []
+        session['attached_bases'] = []
         # Crear un nuevo chat con título predeterminado
         save_chat_history(
             user_id,
@@ -1278,7 +1404,8 @@ def index():
             "Nueva conversación",
             rag_top_k=DEFAULT_RAG_TOP_K,
             temperature=DEFAULT_TEMPERATURE,
-            message_history_limit=DEFAULT_HISTORY_LIMIT
+            message_history_limit=DEFAULT_HISTORY_LIMIT,
+            attached_bases=[]
         )
         # Actualizar la lista de chats
         chats = get_user_chats(user_id)
@@ -1374,7 +1501,14 @@ def chat():
 
     # Realizar RAG usando la base vectorial del chat
     context = ""
-    relevant_docs = query_documents_for_chat(user_message, chat_id, k=rag_top_k)
+    attached_bases = chat_data.get('attached_bases', [])
+    relevant_docs = query_documents_for_chat(
+        user_message,
+        chat_id,
+        k=rag_top_k,
+        user_id=user_id,
+        extra_base_ids=attached_bases,
+    )
     if relevant_docs:
         context = "Información relevante de los documentos:\n\n"
         for i, doc in enumerate(relevant_docs):
@@ -1655,7 +1789,8 @@ def get_chat(chat_id):
             session.get('file_hashes', []),
             rag_top_k=current_chat_data.get('rag_top_k'),
             temperature=current_chat_data.get('temperature'),
-            message_history_limit=current_chat_data.get('message_history_limit')
+            message_history_limit=current_chat_data.get('message_history_limit'),
+            attached_bases=session.get('attached_bases', [])
         )
         logger.debug(f"Guardado estado del chat actual {current_chat_id} antes de cambiar", "app.get_chat")
     
@@ -1668,6 +1803,7 @@ def get_chat(chat_id):
     
     # Actualizar los file_hashes en la sesión con los del chat seleccionado
     session['file_hashes'] = chat_data.get('file_hashes', [])
+    session['attached_bases'] = chat_data.get('attached_bases', [])
     logger.debug(f"Cargando chat {chat_id} con {len(session['file_hashes'])} archivos asociados", "app.get_chat")
     
     # Devolver datos completos del chat, no solo mensajes
@@ -1678,7 +1814,8 @@ def get_chat(chat_id):
         'file_hashes': chat_data.get('file_hashes', []),
         'rag_top_k': chat_data.get('rag_top_k', DEFAULT_RAG_TOP_K),
         'temperature': chat_data.get('temperature', DEFAULT_TEMPERATURE),
-        'message_history_limit': chat_data.get('message_history_limit', DEFAULT_HISTORY_LIMIT)
+        'message_history_limit': chat_data.get('message_history_limit', DEFAULT_HISTORY_LIMIT),
+        'attached_bases': chat_data.get('attached_bases', [])
     })
 
 @app.route('/api/upload', methods=['POST'])
@@ -1714,7 +1851,7 @@ def upload_file():
             file.save(file_path)
             
             # Procesar archivo para RAG y añadirlo al chat actual
-            file_hash, num_chunks = process_file_for_chat(file_path, chat_id, process_images, progress_id=progress_id)
+            file_hash, num_chunks, chunks = process_file_for_chat(file_path, chat_id, process_images, progress_id=progress_id)
             
             # Guardar referencia al archivo en la sesión
             if 'file_hashes' not in session:
@@ -1734,9 +1871,17 @@ def upload_file():
                 session['file_hashes'],
                 rag_top_k=chat_data.get('rag_top_k'),
                 temperature=chat_data.get('temperature'),
-                message_history_limit=chat_data.get('message_history_limit')
+                message_history_limit=chat_data.get('message_history_limit'),
+                attached_bases=session.get('attached_bases', [])
             )
             logger.debug(f"Chat {chat_id} actualizado con nuevo archivo: {filename}", "app.upload_file")
+
+            attached_bases = session.get('attached_bases', [])
+            try:
+                extend_attached_knowledge_bases(user_id, attached_bases, chunks)
+            except Exception:
+                # El helper ya registra el detalle del error; no interrumpimos la carga del archivo.
+                pass
             
             # Guardar en base de datos si el usuario está autenticado
             if current_user.is_authenticated:
@@ -1820,7 +1965,8 @@ def new_chat():
             session.get('file_hashes', []),
             rag_top_k=current_chat_data.get('rag_top_k'),
             temperature=current_chat_data.get('temperature'),
-            message_history_limit=current_chat_data.get('message_history_limit')
+            message_history_limit=current_chat_data.get('message_history_limit'),
+            attached_bases=session.get('attached_bases', [])
         )
         logger.debug(f"Guardado estado del chat actual {current_chat_id} antes de crear uno nuevo", "app.new_chat")
     
@@ -1881,7 +2027,8 @@ def delete_file(file_hash):
             file_hashes,
             rag_top_k=chat_data.get('rag_top_k'),
             temperature=chat_data.get('temperature'),
-            message_history_limit=chat_data.get('message_history_limit')
+            message_history_limit=chat_data.get('message_history_limit'),
+            attached_bases=session.get('attached_bases', [])
         )
         logger.debug(f"Chat {chat_id} actualizado tras eliminar archivo {file_hash}", "app.delete_file")
 
@@ -1896,6 +2043,151 @@ def delete_file(file_hash):
         return jsonify({"success": True, "chat_id": chat_id})
 
     return jsonify({"error": "Archivo no encontrado"}), 404
+
+
+@app.route('/api/knowledge_bases', methods=['GET'])
+@login_required
+def list_knowledge_bases():
+    """Devuelve las bases RAG guardadas por el usuario actual."""
+
+    user_id = get_user_id()
+    chat_id = request.args.get('chat_id')
+    attached = set()
+
+    if chat_id:
+        chat_data = get_chat_data(user_id, chat_id)
+        attached = set(chat_data.get('attached_bases', []))
+
+    bases = (
+        KnowledgeBase.query.filter_by(user_id=user_id)
+        .order_by(KnowledgeBase.created_at.desc())
+        .all()
+    )
+
+    return jsonify({
+        "knowledge_bases": [serialize_knowledge_base(base, base.id in attached) for base in bases],
+        "attached_bases": list(attached)
+    })
+
+
+@app.route('/api/knowledge_bases', methods=['POST'])
+@login_required
+def save_knowledge_base():
+    """Guarda la base vectorial del chat actual con un nombre personalizado."""
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    chat_id = data.get('chat_id') or session.get('chat_id')
+    user_id = get_user_id()
+
+    if not name:
+        return jsonify({"error": "El nombre es obligatorio"}), 400
+    if not chat_id:
+        return jsonify({"error": "No hay chat activo para guardar"}), 400
+
+    chat_db_path = os.path.join(VECTORDB_DIR, str(chat_id))
+    if not os.path.exists(chat_db_path):
+        return jsonify({"error": "Este chat no tiene una base RAG para guardar"}), 400
+
+    if KnowledgeBase.query.filter_by(user_id=user_id, name=name).first():
+        return jsonify({"error": "Ya existe una base con ese nombre"}), 409
+
+    kb_id = str(uuid.uuid4())
+    relative_path = os.path.join('knowledge_bases', kb_id)
+    destination = os.path.join(KNOWLEDGE_BASE_DIR, kb_id)
+
+    try:
+        shutil.copytree(chat_db_path, destination)
+    except Exception as exc:
+        logger.error(f"No se pudo copiar la base vectorial del chat {chat_id} a {destination}: {exc}", "app.save_knowledge_base")
+        return jsonify({"error": "No se pudo guardar la base RAG"}), 500
+
+    kb = KnowledgeBase(
+        id=kb_id,
+        user_id=user_id,
+        name=name,
+        vectorstore_path=relative_path,
+        source_chat_id=chat_id,
+    )
+
+    db.session.add(kb)
+    db.session.commit()
+
+    logger.info(f"Base RAG guardada ({name}) por el usuario {user_id}", "app.save_knowledge_base")
+
+    return jsonify({
+        "success": True,
+        "knowledge_base": serialize_knowledge_base(kb)
+    }), 201
+
+
+@app.route('/api/chat/<chat_id>/knowledge_bases', methods=['GET'])
+@login_required
+def get_chat_knowledge_bases(chat_id):
+    """Lista las bases guardadas del usuario e indica cuáles están asociadas al chat."""
+
+    user_id = get_user_id()
+    chat_file = os.path.join(DATA_DIR, f"{user_id}_{chat_id}.json")
+    if not os.path.exists(chat_file):
+        return jsonify({"error": "Chat no encontrado"}), 404
+
+    chat_data = get_chat_data(user_id, chat_id)
+    attached = set(chat_data.get('attached_bases', []))
+
+    bases = (
+        KnowledgeBase.query.filter_by(user_id=user_id)
+        .order_by(KnowledgeBase.created_at.desc())
+        .all()
+    )
+
+    return jsonify({
+        "knowledge_bases": [serialize_knowledge_base(base, base.id in attached) for base in bases],
+        "attached_bases": list(attached)
+    })
+
+
+@app.route('/api/chat/<chat_id>/knowledge_bases/<kb_id>', methods=['POST'])
+@login_required
+def attach_knowledge_base(chat_id, kb_id):
+    """Asocia una base guardada al chat actual."""
+
+    user_id = get_user_id()
+    kb = KnowledgeBase.query.filter_by(id=kb_id, user_id=user_id).first()
+    if not kb:
+        return jsonify({"error": "Base RAG no encontrada"}), 404
+
+    chat_file = os.path.join(DATA_DIR, f"{user_id}_{chat_id}.json")
+    if not os.path.exists(chat_file):
+        return jsonify({"error": "Chat no encontrado"}), 404
+
+    chat_data = get_chat_data(user_id, chat_id)
+    attached = set(chat_data.get('attached_bases', []))
+
+    if kb_id not in attached:
+        attached.add(kb_id)
+        _persist_attached_bases(user_id, chat_id, chat_data, attached)
+
+    return jsonify({"success": True, "attached_bases": list(attached)})
+
+
+@app.route('/api/chat/<chat_id>/knowledge_bases/<kb_id>', methods=['DELETE'])
+@login_required
+def detach_knowledge_base(chat_id, kb_id):
+    """Desasocia una base guardada del chat actual."""
+
+    user_id = get_user_id()
+    chat_file = os.path.join(DATA_DIR, f"{user_id}_{chat_id}.json")
+    if not os.path.exists(chat_file):
+        return jsonify({"error": "Chat no encontrado"}), 404
+
+    chat_data = get_chat_data(user_id, chat_id)
+    attached = set(chat_data.get('attached_bases', []))
+
+    if kb_id in attached:
+        attached.remove(kb_id)
+        _persist_attached_bases(user_id, chat_id, chat_data, attached)
+
+    return jsonify({"success": True, "attached_bases": list(attached)})
             
 def read_app_version(default="0.0.0"):
     """Lee la versión de la aplicación desde el archivo version.txt."""
@@ -2429,12 +2721,14 @@ def update_system_message(chat_id):
         chat_data.get('file_hashes', []),
         rag_top_k=chat_data.get('rag_top_k'),
         temperature=chat_data.get('temperature'),
-        message_history_limit=chat_data.get('message_history_limit')
+        message_history_limit=chat_data.get('message_history_limit'),
+        attached_bases=chat_data.get('attached_bases', [])
     )
 
     # Si es el chat actual, actualizar también la sesión
     if session.get('chat_id') == chat_id:
         session['file_hashes'] = chat_data.get('file_hashes', [])
+        session['attached_bases'] = chat_data.get('attached_bases', [])
 
     return jsonify({"success": True, "chat_id": chat_id})
 
@@ -2463,7 +2757,8 @@ def update_chat_title(chat_id):
         chat_data.get('file_hashes', []),
         rag_top_k=chat_data.get('rag_top_k'),
         temperature=chat_data.get('temperature'),
-        message_history_limit=chat_data.get('message_history_limit')
+        message_history_limit=chat_data.get('message_history_limit'),
+        attached_bases=chat_data.get('attached_bases', [])
     )
 
     return jsonify({"success": True, "chat_id": chat_id})

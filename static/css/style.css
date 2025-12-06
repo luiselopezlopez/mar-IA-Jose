@@ -1202,6 +1202,155 @@ body.dark-mode .change-password-feedback.success {
     background-color: #e0e0e0;
 }
 
+.knowledge-base-btn.has-attachments {
+    background-color: #e8f5e9;
+    border-color: #9dd7a7;
+    color: #1b5e20;
+    font-weight: 600;
+}
+
+.knowledge-base-modal-content {
+    width: min(640px, 92vw);
+    max-height: 90vh;
+}
+
+.knowledge-base-description {
+    margin: 0 0 12px;
+    color: #475569;
+    font-size: 0.95rem;
+}
+
+.knowledge-base-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.knowledge-base-form-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+#knowledge-base-name {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 1rem;
+}
+
+.knowledge-base-feedback {
+    min-height: 20px;
+    margin-top: 6px;
+    font-size: 0.9rem;
+    color: #0078d4;
+}
+
+.knowledge-base-feedback.error {
+    color: #d93025;
+}
+
+.knowledge-base-feedback.success {
+    color: #1b873f;
+}
+
+.knowledge-base-list-section {
+    margin-top: 15px;
+}
+
+.knowledge-base-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.knowledge-base-list-header small {
+    font-weight: 400;
+    font-size: 0.85rem;
+    color: #64748b;
+}
+
+.knowledge-base-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.knowledge-base-item {
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.knowledge-base-item.attached {
+    border-color: #34a853;
+    box-shadow: 0 0 0 2px rgba(52, 168, 83, 0.15);
+}
+
+.knowledge-base-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.knowledge-base-details strong {
+    display: block;
+    font-size: 1rem;
+    color: #0f172a;
+}
+
+.knowledge-base-meta {
+    font-size: 0.85rem;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+.knowledge-base-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.knowledge-base-toggle-btn {
+    padding: 6px 12px;
+    font-size: 0.9rem;
+}
+
+.knowledge-base-empty {
+    text-align: center;
+    padding: 20px 10px;
+    color: #94a3b8;
+    font-style: italic;
+}
+
+@media (max-width: 640px) {
+    .knowledge-base-form-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .knowledge-base-actions {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .knowledge-base-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
 /* Estilos para modo oscuro */
 body.dark-mode .modal-content {
     background-color: #1e1e1e;
@@ -1252,6 +1401,48 @@ body.dark-mode .cancel-btn {
     background-color: #333;
     border-color: #444;
     color: #e0e0e0;
+}
+
+body.dark-mode .knowledge-base-btn.has-attachments {
+    background-color: rgba(34, 197, 94, 0.18);
+    border-color: rgba(34, 197, 94, 0.55);
+    color: #4ade80;
+}
+
+body.dark-mode #knowledge-base-name {
+    background-color: #111827;
+    color: #f1f5f9;
+    border-color: #374151;
+}
+
+body.dark-mode .knowledge-base-description,
+body.dark-mode .knowledge-base-list-header,
+body.dark-mode .knowledge-base-list-header small,
+body.dark-mode .knowledge-base-meta,
+body.dark-mode .knowledge-base-feedback {
+    color: #cbd5f5;
+}
+
+body.dark-mode .knowledge-base-feedback.error {
+    color: #f87171;
+}
+
+body.dark-mode .knowledge-base-feedback.success {
+    color: #34d399;
+}
+
+body.dark-mode .knowledge-base-item {
+    border-color: #334155;
+    background-color: #0f172a;
+}
+
+body.dark-mode .knowledge-base-item.attached {
+    border-color: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
+body.dark-mode .knowledge-base-empty {
+    color: #94a3b8;
 }
 
 body.dark-mode .manage-users-description {
