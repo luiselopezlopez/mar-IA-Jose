@@ -1,10 +1,7 @@
 """Utilities to detect specially marked documentation blocks in assistant responses
 and export them automatically to Word (.docx) files.
 
-Markers:
-    [WORD_DOC]
-    (content)
-    [/WORD_DOC]
+
 
 Public functions:
 - extraer_bloque_word(respuesta: str) -> str | None

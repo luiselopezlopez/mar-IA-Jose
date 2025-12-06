@@ -7,8 +7,18 @@ document.addEventListener('DOMContentLoaded', function() {
     const newChatBtn = document.getElementById('new-chat-btn');
     const chatList = document.querySelector('.chat-list');
     const modelSelect = document.getElementById('model-select');
+    const ragTopKInput = document.getElementById('rag-top-k');
+    const temperatureInput = document.getElementById('temperature-input');
+    const messageHistoryLimitInput = document.getElementById('message-history-limit');
     const cameraBtn = document.getElementById('camera-btn');
+    const downloadConversationBtn = document.getElementById('download-conversation-btn');
     const helpBtn = document.getElementById('help-btn');
+    const knowledgeBaseBtn = document.getElementById('knowledge-base-btn');
+    const knowledgeBaseModal = document.getElementById('knowledge-base-modal');
+    const knowledgeBaseNameInput = document.getElementById('knowledge-base-name');
+    const saveKnowledgeBaseBtn = document.getElementById('save-knowledge-base-btn');
+    const knowledgeBaseList = document.getElementById('knowledge-base-list');
+    const knowledgeBaseFeedback = document.getElementById('knowledge-base-feedback');
     const DEFAULT_SYSTEM_PROMPT_TEXT = "Eres un asistente útil que responde a las preguntas del usuario de manera clara y concisa. Si no sabes la respuesta, di que no lo sabes. No inventes respuestas.";
     const savedPromptsSelect = document.getElementById('saved-prompts-select');
     const storeSystemPromptBtn = document.getElementById('store-system-prompt-btn');
@@ -40,6 +50,68 @@ document.addEventListener('DOMContentLoaded', function() {
     const adminResetCancelBtn = document.getElementById('admin-reset-password-cancel');
     const currentUserIsAdmin = document.body && document.body.dataset ? document.body.dataset.isAdmin === 'true' : false;
 
+    const DEFAULT_RAG_TOP_K = (() => {
+        if (!ragTopKInput) {
+            return 3;
+        }
+        const initial = ragTopKInput.defaultValue || ragTopKInput.getAttribute('value') || ragTopKInput.value;
+        const parsed = parseInt(initial, 10);
+        if (!Number.isFinite(parsed)) {
+            return 3;
+        }
+        return Math.min(Math.max(parsed, 1), 20);
+    })();
+
+    const DEFAULT_TEMPERATURE = (() => {
+        if (!temperatureInput) {
+            return 1.0;
+        }
+        const initial = temperatureInput.defaultValue || temperatureInput.getAttribute('value') || temperatureInput.value;
+        const parsed = parseFloat(initial);
+        if (!Number.isFinite(parsed)) {
+            return 1.0;
+        }
+        const clamped = Math.min(Math.max(parsed, 0), 2);
+        return Math.round(clamped * 10) / 10;
+    })();
+
+    const DEFAULT_HISTORY_LIMIT = (() => {
+        if (!messageHistoryLimitInput) {
+            return 10;
+        }
+        const initial = messageHistoryLimitInput.defaultValue || messageHistoryLimitInput.getAttribute('value') || messageHistoryLimitInput.value;
+        const parsed = parseInt(initial, 10);
+        if (!Number.isFinite(parsed)) {
+            return 10;
+        }
+        return Math.min(Math.max(parsed, 1), 50);
+    })();
+
+    function normalizeTopK(value) {
+        const parsed = parseInt(value, 10);
+        if (!Number.isFinite(parsed)) {
+            return DEFAULT_RAG_TOP_K;
+        }
+        return Math.min(Math.max(parsed, 1), 20);
+    }
+
+    function normalizeTemperature(value) {
+        const parsed = parseFloat(value);
+        if (!Number.isFinite(parsed)) {
+            return DEFAULT_TEMPERATURE;
+        }
+        const clamped = Math.min(Math.max(parsed, 0), 2);
+        return Math.round(clamped * 10) / 10;
+    }
+
+    function normalizeHistoryLimit(value) {
+        const parsed = parseInt(value, 10);
+        if (!Number.isFinite(parsed)) {
+            return DEFAULT_HISTORY_LIMIT;
+        }
+        return Math.min(Math.max(parsed, 1), 50);
+    }
+
     if (changePasswordSubmitBtn && !changePasswordSubmitBtn.dataset.originalText) {
         changePasswordSubmitBtn.dataset.originalText = changePasswordSubmitBtn.textContent;
     }
@@ -63,6 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let savedPromptsCache = [];
     let adminUsersState = { users: [], totalAdmins: 0 };
     let adminResetTargetId = null;
+    let attachedKnowledgeBases = [];
 
     // Cola de procesamiento de archivos
     let uploadQueue = [];
@@ -220,6 +293,239 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (adminResetPasswordInput) {
             setTimeout(() => adminResetPasswordInput.focus(), 50);
+        }
+    }
+
+    function setKnowledgeBaseFeedback(message, type = 'info') {
+        if (!knowledgeBaseFeedback) {
+            return;
+        }
+
+        knowledgeBaseFeedback.textContent = message || '';
+        knowledgeBaseFeedback.classList.remove('error', 'success');
+
+        if (type === 'error') {
+            knowledgeBaseFeedback.classList.add('error');
+        } else if (type === 'success') {
+            knowledgeBaseFeedback.classList.add('success');
+        }
+    }
+
+    function openKnowledgeBaseModal() {
+        if (!knowledgeBaseModal) {
+            return;
+        }
+
+        if (!currentChatId) {
+            setKnowledgeBaseFeedback('Crea o selecciona un chat antes de guardar una base RAG.', 'error');
+            return;
+        }
+
+        knowledgeBaseModal.classList.add('open');
+        knowledgeBaseModal.setAttribute('aria-hidden', 'false');
+        setKnowledgeBaseFeedback('');
+
+        if (knowledgeBaseNameInput) {
+            knowledgeBaseNameInput.value = '';
+            setTimeout(() => knowledgeBaseNameInput.focus(), 50);
+        }
+
+        loadKnowledgeBasesForChat();
+    }
+
+    function closeKnowledgeBaseModal() {
+        if (!knowledgeBaseModal) {
+            return;
+        }
+
+        knowledgeBaseModal.classList.remove('open');
+        knowledgeBaseModal.setAttribute('aria-hidden', 'true');
+    }
+
+    async function loadKnowledgeBasesForChat() {
+        if (!currentChatId || !knowledgeBaseList) {
+            return;
+        }
+
+        setKnowledgeBaseFeedback('Cargando bases guardadas…', 'info');
+        knowledgeBaseList.innerHTML = '<p class="knowledge-base-empty">Cargando información…</p>';
+
+        try {
+            const response = await fetch(`/api/chat/${currentChatId}/knowledge_bases`);
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(data.error || 'No se pudo obtener la lista de bases RAG.');
+            }
+
+            const bases = Array.isArray(data.knowledge_bases) ? data.knowledge_bases : [];
+            attachedKnowledgeBases = Array.isArray(data.attached_bases) ? data.attached_bases : [];
+
+            if (currentChatData) {
+                currentChatData.attached_bases = [...attachedKnowledgeBases];
+            }
+
+            renderKnowledgeBaseList(bases);
+            setKnowledgeBaseFeedback(bases.length ? '' : 'No hay bases guardadas todavía. Guarda la base actual para reutilizarla.', 'info');
+        } catch (error) {
+            console.error('Error loading knowledge bases:', error);
+            knowledgeBaseList.innerHTML = '<p class="knowledge-base-empty">No se pudieron cargar las bases guardadas.</p>';
+            setKnowledgeBaseFeedback(error.message || 'Error al cargar las bases guardadas.', 'error');
+        } finally {
+            updateKnowledgeBaseButtonState();
+        }
+    }
+
+    function renderKnowledgeBaseList(bases) {
+        if (!knowledgeBaseList) {
+            return;
+        }
+
+        knowledgeBaseList.innerHTML = '';
+
+        if (!bases.length) {
+            knowledgeBaseList.innerHTML = '<p class="knowledge-base-empty">No hay bases guardadas.</p>';
+            return;
+        }
+
+        bases.forEach(base => {
+            const item = document.createElement('div');
+            item.className = 'knowledge-base-item';
+            if (base.attached) {
+                item.classList.add('attached');
+            }
+
+            const details = document.createElement('div');
+            details.className = 'knowledge-base-details';
+
+            const title = document.createElement('strong');
+            title.textContent = base.name;
+            details.appendChild(title);
+
+            const meta = document.createElement('div');
+            meta.className = 'knowledge-base-meta';
+            meta.textContent = base.created_at ? `Guardado el ${formatDate(base.created_at)}` : '';
+            details.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'knowledge-base-actions';
+
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'primary-btn knowledge-base-toggle-btn';
+            toggleBtn.textContent = base.attached ? 'Desasociar' : 'Asociar';
+            toggleBtn.addEventListener('click', () => toggleKnowledgeBaseAttachment(base.id, !base.attached));
+            actions.appendChild(toggleBtn);
+
+            item.appendChild(details);
+            item.appendChild(actions);
+            knowledgeBaseList.appendChild(item);
+        });
+    }
+
+    async function toggleKnowledgeBaseAttachment(kbId, shouldAttach) {
+        if (!currentChatId) {
+            return;
+        }
+
+        setKnowledgeBaseFeedback(shouldAttach ? 'Asociando base…' : 'Desasociando base…', 'info');
+
+        try {
+            const response = await fetch(`/api/chat/${currentChatId}/knowledge_bases/${kbId}`, {
+                method: shouldAttach ? 'POST' : 'DELETE'
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'No se pudo actualizar la asociación.');
+            }
+
+            attachedKnowledgeBases = Array.isArray(data.attached_bases) ? data.attached_bases : [];
+            if (currentChatData) {
+                currentChatData.attached_bases = [...attachedKnowledgeBases];
+            }
+
+            await loadKnowledgeBasesForChat();
+            setKnowledgeBaseFeedback('Asociaciones actualizadas.', 'success');
+        } catch (error) {
+            console.error('Error updating knowledge base attachment:', error);
+            setKnowledgeBaseFeedback(error.message || 'No se pudo actualizar la asociación.', 'error');
+        } finally {
+            updateKnowledgeBaseButtonState();
+        }
+    }
+
+    async function handleSaveKnowledgeBase(event) {
+        if (event) {
+            event.preventDefault();
+        }
+
+        if (!currentChatId) {
+            setKnowledgeBaseFeedback('Selecciona un chat antes de guardar su base RAG.', 'error');
+            return;
+        }
+
+        if (!knowledgeBaseNameInput) {
+            return;
+        }
+
+        const name = knowledgeBaseNameInput.value.trim();
+        if (!name) {
+            setKnowledgeBaseFeedback('Introduce un nombre para la base.', 'error');
+            return;
+        }
+
+        setKnowledgeBaseFeedback('Guardando base…', 'info');
+        if (saveKnowledgeBaseBtn) {
+            saveKnowledgeBaseBtn.disabled = true;
+        }
+
+        try {
+            const response = await fetch('/api/knowledge_bases', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name,
+                    chat_id: currentChatId
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'No se pudo guardar la base RAG.');
+            }
+
+            knowledgeBaseNameInput.value = '';
+            setKnowledgeBaseFeedback('Base guardada correctamente.', 'success');
+            await loadKnowledgeBasesForChat();
+        } catch (error) {
+            console.error('Error saving knowledge base:', error);
+            setKnowledgeBaseFeedback(error.message || 'No se pudo guardar la base.', 'error');
+        } finally {
+            if (saveKnowledgeBaseBtn) {
+                saveKnowledgeBaseBtn.disabled = false;
+            }
+        }
+    }
+
+    function updateKnowledgeBaseButtonState() {
+        if (!knowledgeBaseBtn) {
+            return;
+        }
+
+        const defaultLabel = knowledgeBaseBtn.dataset.defaultLabel || knowledgeBaseBtn.textContent || 'Guardar RAG';
+        if (!knowledgeBaseBtn.dataset.defaultLabel) {
+            knowledgeBaseBtn.dataset.defaultLabel = defaultLabel;
+        }
+
+        const count = Array.isArray(attachedKnowledgeBases) ? attachedKnowledgeBases.length : 0;
+        if (count > 0) {
+            knowledgeBaseBtn.classList.add('has-attachments');
+            knowledgeBaseBtn.textContent = `${defaultLabel} (${count})`;
+        } else {
+            knowledgeBaseBtn.classList.remove('has-attachments');
+            knowledgeBaseBtn.textContent = defaultLabel;
         }
     }
 
@@ -929,10 +1235,29 @@ document.addEventListener('DOMContentLoaded', function() {
                 systemMessageInput.value = defaultPromptText;
             }
 
+            if (ragTopKInput) {
+                ragTopKInput.value = DEFAULT_RAG_TOP_K;
+            }
+
+            if (temperatureInput) {
+                temperatureInput.value = DEFAULT_TEMPERATURE.toFixed(1);
+            }
+
+            if (messageHistoryLimitInput) {
+                messageHistoryLimitInput.value = DEFAULT_HISTORY_LIMIT;
+            }
+
             currentChatData = {
                 messages: [],
-                system_message: defaultPromptText
+                system_message: defaultPromptText,
+                rag_top_k: DEFAULT_RAG_TOP_K,
+                temperature: DEFAULT_TEMPERATURE,
+                message_history_limit: DEFAULT_HISTORY_LIMIT,
+                attached_bases: []
             };
+
+            attachedKnowledgeBases = [];
+            updateKnowledgeBaseButtonState();
 
             clearChatMessages();
             clearChatInputState();
@@ -1098,6 +1423,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = await response.json();
             currentChatId = chatId;
             currentChatData = data;
+            attachedKnowledgeBases = Array.isArray(data.attached_bases) ? data.attached_bases : [];
+            currentChatData.attached_bases = attachedKnowledgeBases;
+            updateKnowledgeBaseButtonState();
 
             const loadingIndicator = document.getElementById('chat-loading-indicator');
             if (loadingIndicator) {
@@ -1112,36 +1440,37 @@ document.addEventListener('DOMContentLoaded', function() {
                 setSystemPromptsFeedback('');
             }
 
+            const resolvedTopK = normalizeTopK(data.rag_top_k);
+            if (ragTopKInput) {
+                ragTopKInput.value = resolvedTopK;
+            }
+
+            const resolvedTemperature = normalizeTemperature(data.temperature);
+            if (temperatureInput) {
+                temperatureInput.value = resolvedTemperature.toFixed(1);
+            }
+
+            const resolvedHistoryLimit = normalizeHistoryLimit(data.message_history_limit);
+            if (messageHistoryLimitInput) {
+                messageHistoryLimitInput.value = resolvedHistoryLimit;
+            }
+
+            currentChatData.rag_top_k = resolvedTopK;
+            currentChatData.temperature = resolvedTemperature;
+            currentChatData.message_history_limit = resolvedHistoryLimit;
+
             const messages = data.messages || data;
 
             if (messages.length === 0) {
                 showWelcomeMessage();
             } else {
-                const fragment = document.createDocumentFragment();
-
                 messages.forEach(msg => {
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = `message ${msg.role}-message`;
-
-                    let formattedContent = '';
-
-                    if (Array.isArray(msg.content)) {
-                        msg.content.forEach(item => {
-                            if (item.type === 'text') {
-                                formattedContent += formatContent(item.text);
-                            } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
-                                formattedContent += `<img src="${item.image_url.url}" alt="Imagen adjunta" style="max-width: 100%; height: auto; margin: 10px 0;">`;
-                            }
-                        });
-                    } else {
-                        formattedContent = formatContent(msg.content);
-                    }
-
-                    messageDiv.innerHTML = formattedContent;
-                    fragment.appendChild(messageDiv);
+                    const options = {
+                        rawContent: typeof msg.content === 'string' ? msg.content : null,
+                        suppressScroll: true
+                    };
+                    addMessageToChat(msg.role, msg.content, options);
                 });
-
-                chatMessages.appendChild(fragment);
             }
 
             if (window.MathJax) {
@@ -1165,42 +1494,304 @@ document.addEventListener('DOMContentLoaded', function() {
     // Función para limpiar los mensajes del chat
     function clearChatMessages() {
         chatMessages.innerHTML = '';
-    }    // Función para añadir un mensaje al chat (optimizada para mensajes individuales)
-    function addMessageToChat(role, content) {
+    }
+
+    function prepareMessageData(content, rawContent) {
+        let displayContent = '';
+
+        if (Array.isArray(content)) {
+            displayContent = content;
+        } else if (typeof content === 'string') {
+            displayContent = content;
+        } else if (typeof rawContent === 'string') {
+            displayContent = rawContent;
+        }
+
+        let rawForExport = '';
+
+        if (typeof rawContent === 'string' && rawContent.trim()) {
+            rawForExport = rawContent;
+        } else if (typeof content === 'string') {
+            rawForExport = content;
+        } else if (Array.isArray(content)) {
+            rawForExport = content
+                .map(item => (item && item.type === 'text' && typeof item.text === 'string') ? item.text : '')
+                .filter(Boolean)
+                .join('\n')
+                .trim();
+        }
+
+        return {
+            displayContent,
+            rawForExport
+        };
+    }
+
+    function attachExportButton(messageDiv) {
+        if (!messageDiv || messageDiv.querySelector('.message-toolbar')) {
+            return;
+        }
+
+        const toolbar = document.createElement('div');
+        toolbar.className = 'message-toolbar';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'export-word-btn';
+        button.title = 'Exportar mensaje como Word';
+        button.setAttribute('aria-label', 'Exportar mensaje como Word');
+        button.innerText = '📄';
+
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            exportMessageAsWord(messageDiv);
+        });
+
+        toolbar.appendChild(button);
+        messageDiv.insertBefore(toolbar, messageDiv.firstChild);
+        messageDiv.classList.add('has-export-action');
+    }
+
+    async function exportMessageAsWord(messageElement) {
+        if (!messageElement) {
+            return;
+        }
+
+        let exportContent = messageElement.__rawContent;
+
+        if (typeof exportContent !== 'string' || !exportContent.trim()) {
+            const body = messageElement.querySelector('.message-body');
+            exportContent = body ? body.innerText : messageElement.innerText;
+        }
+
+        exportContent = exportContent ? exportContent.trim() : '';
+
+        if (!exportContent) {
+            alert('No hay contenido disponible para exportar.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/export_word', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ content: exportContent })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.download_url) {
+                throw new Error(data.error || 'No se pudo generar el documento Word.');
+            }
+
+            window.open(data.download_url, '_blank', 'noopener');
+        } catch (error) {
+            console.error('Error exportando mensaje a Word:', error);
+            alert(error.message || 'No se pudo exportar el mensaje a Word.');
+        }
+    }
+
+    function sanitizeExportContent(rawContent) {
+        if (typeof rawContent !== 'string' || !rawContent.trim()) {
+            return '';
+        }
+
+        let sanitized = rawContent.replace(/<br\s*\/?\>/gi, '\n');
+        sanitized = sanitized.replace(/<img[^>]*>/gi, '');
+        sanitized = sanitized.replace(/<\/(?:p|div)>/gi, '\n');
+        sanitized = sanitized.replace(/&nbsp;/gi, ' ');
+
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = sanitized;
+        sanitized = (tempContainer.textContent || tempContainer.innerText || '').replace(/\u00a0/g, ' ');
+
+        return sanitized.replace(/\r/g, '').trim();
+    }
+
+    function getMessageExportContent(messageElement) {
+        if (!messageElement) {
+            return '(sin contenido)';
+        }
+
+        const rawContent = typeof messageElement.__rawContent === 'string' ? messageElement.__rawContent.trim() : '';
+        let content = sanitizeExportContent(rawContent);
+
+        if (!content) {
+            const body = messageElement.querySelector('.message-body');
+            const bodyText = body ? body.innerText : messageElement.innerText;
+            content = (bodyText || '').replace(/\r/g, '').trim();
+        }
+
+        const imageCount = messageElement.querySelectorAll('img').length;
+        if (imageCount > 0) {
+            const placeholder = imageCount === 1 ? '[Imagen adjunta]' : `[${imageCount} imágenes adjuntas]`;
+            content = content ? `${content}\n\n${placeholder}` : placeholder;
+        }
+
+        if (!content) {
+            return '(sin contenido)';
+        }
+
+        return content.replace(/\n{3,}/g, '\n\n');
+    }
+
+    function getActiveChatTitle() {
+        if (currentChatData && typeof currentChatData.title === 'string' && currentChatData.title.trim()) {
+            return currentChatData.title.trim();
+        }
+
+        const activePreview = document.querySelector('.chat-item.active .chat-preview');
+        if (activePreview && activePreview.textContent) {
+            const candidate = activePreview.textContent.trim();
+            if (candidate) {
+                return candidate;
+            }
+        }
+
+        return '';
+    }
+
+    function buildConversationExportContent() {
+        if (!chatMessages) {
+            return '';
+        }
+
+        const messageNodes = Array.from(chatMessages.querySelectorAll('.message'));
+        if (messageNodes.length === 0) {
+            return '';
+        }
+
+        const lines = [];
+        const conversationTitle = getActiveChatTitle() || 'Conversación';
+        lines.push(`# ${conversationTitle}`);
+        lines.push('');
+        lines.push(`Generado: ${new Date().toLocaleString()}`);
+
+        const systemMessageInput = document.getElementById('system-message-input');
+        const systemMessageValue = (
+            currentChatData && typeof currentChatData.system_message === 'string' && currentChatData.system_message.trim()
+                ? currentChatData.system_message.trim()
+                : (systemMessageInput ? systemMessageInput.value.trim() : '')
+        );
+
+        if (systemMessageValue) {
+            lines.push('');
+            lines.push('## Mensaje del sistema');
+            lines.push('');
+            lines.push(systemMessageValue);
+        }
+
+        lines.push('');
+        lines.push('## Historial');
+        lines.push('');
+
+        const roleLabels = {
+            user: 'Usuario',
+            assistant: 'Asistente',
+            system: 'Sistema',
+            tool: 'Herramienta'
+        };
+
+        messageNodes.forEach((node, index) => {
+            const role = node.dataset.role
+                || (Array.from(node.classList).find(cls => cls.endsWith('-message')) || '').replace('-message', '')
+                || 'mensaje';
+
+            const label = roleLabels[role] || role.charAt(0).toUpperCase() + role.slice(1);
+            const content = getMessageExportContent(node);
+
+            lines.push(`### Mensaje ${index + 1} · ${label}`);
+            lines.push('');
+            lines.push(content);
+            lines.push('');
+        });
+
+        return lines.join('\n').trim();
+    }
+
+    async function exportConversationAsWord() {
+        if (!currentChatId) {
+            alert('Selecciona o crea un chat antes de exportar la conversación.');
+            return;
+        }
+
+        const exportContent = buildConversationExportContent();
+        if (!exportContent) {
+            alert('No hay mensajes disponibles para exportar.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/export_word', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ content: exportContent })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.download_url) {
+                throw new Error(data.error || 'No se pudo generar el documento Word.');
+            }
+
+            window.open(data.download_url, '_blank', 'noopener');
+        } catch (error) {
+            console.error('Error exportando la conversación a Word:', error);
+            alert(error.message || 'No se pudo exportar la conversación.');
+        }
+    }
+
+    // Función para añadir un mensaje al chat (optimizada para mensajes individuales)
+    function addMessageToChat(role, content, options = {}) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}-message`;
+        messageDiv.dataset.role = role;
 
+        const prepared = prepareMessageData(content, options.rawContent);
         let formattedContent = '';
 
-        // Verificar si el contenido es un array (formato multimodal) o texto simple
-        if (Array.isArray(content)) {
-            // Formato multimodal: procesar cada elemento del array
-            content.forEach(item => {
+        if (Array.isArray(prepared.displayContent)) {
+            prepared.displayContent.forEach(item => {
                 if (item.type === 'text') {
-                    // Añadir texto formateado
                     formattedContent += formatContent(item.text);
                 } else if (item.type === 'image_url' && item.image_url && item.image_url.url) {
-                    // Añadir imagen
                     formattedContent += `<img src="${item.image_url.url}" alt="Imagen adjunta" style="max-width: 100%; height: auto; margin: 10px 0;">`;
                 }
             });
         } else {
-            // Formato de texto simple: procesar normalmente
-            formattedContent = formatContent(content);
+            formattedContent = formatContent(prepared.displayContent);
         }
 
-        messageDiv.innerHTML = formattedContent;
+        const bodyDiv = document.createElement('div');
+        bodyDiv.className = 'message-body';
+        bodyDiv.innerHTML = formattedContent;
+        messageDiv.appendChild(bodyDiv);
+
+        messageDiv.__rawContent = typeof prepared.rawForExport === 'string' ? prepared.rawForExport.trim() : '';
+
+        if (options.attachExportButton !== false && (role === 'assistant' || role === 'user')) {
+            attachExportButton(messageDiv);
+        }
+
         chatMessages.appendChild(messageDiv);
-        
-        // Actualizar la renderización de MathJax solo para este mensaje específico
+
         if (window.MathJax) {
             window.MathJax.typesetPromise([messageDiv]).catch((err) => {
                 console.error('Error al renderizar LaTeX:', err);
             });
         }
-        
-        scrollToBottom();
-    }// Función para formatear el contenido (código, enlaces, LaTeX, etc.)
+
+        if (!options.suppressScroll) {
+            scrollToBottom();
+        }
+
+        return messageDiv;
+    }
+    // Función para formatear el contenido (código, enlaces, LaTeX, etc.)
     function formatContent(content) {
         // Crear un elemento div para contener el HTML generado
         const div = document.createElement('div');
@@ -1331,6 +1922,21 @@ document.addEventListener('DOMContentLoaded', function() {
         chatInput.value = '';
     }
 
+    function cacheMessage(role, content) {
+        if (!currentChatData || typeof currentChatData !== 'object') {
+            currentChatData = {};
+        }
+
+        if (!Array.isArray(currentChatData.messages)) {
+            currentChatData.messages = [];
+        }
+
+        currentChatData.messages.push({
+            role,
+            content
+        });
+    }
+
     // Función para enviar mensaje al servidor
     function sendMessageToServer(message) {
         // Preparar el contenido del mensaje con imágenes si hay
@@ -1356,12 +1962,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        // Cancelar peticiones anteriores y preparar una nueva
-        cancelActiveChatRequest();
-        activeChatRequestController = new AbortController();
+    // Cancelar peticiones anteriores y preparar una nueva
+    cancelActiveChatRequest();
+    activeChatRequestController = new AbortController();
 
-        // Añadir mensaje del usuario al chat
-        addMessageToChat('user', messageContent);
+    // Añadir mensaje del usuario al chat
+    addMessageToChat('user', messageContent, { rawContent: messageContent });
+    cacheMessage('user', messageContent);
 
         // Mostrar indicador de escritura
         showTypingIndicator();
@@ -1369,6 +1976,39 @@ document.addEventListener('DOMContentLoaded', function() {
         // Obtener el mensaje del sistema personalizado si existe
         const systemMessageInput = document.getElementById('system-message-input');
         const systemMessage = systemMessageInput ? systemMessageInput.value : null;
+
+        if (systemMessageInput) {
+            if (!currentChatData || typeof currentChatData !== 'object') {
+                currentChatData = {};
+            }
+            currentChatData.system_message = systemMessage || '';
+        }
+
+        // Obtener parámetros de RAG y generación
+        const normalizedTopK = ragTopKInput ? normalizeTopK(ragTopKInput.value) : DEFAULT_RAG_TOP_K;
+        if (ragTopKInput && ragTopKInput.value !== String(normalizedTopK)) {
+            ragTopKInput.value = normalizedTopK;
+        }
+
+        const normalizedTemperature = temperatureInput ? normalizeTemperature(temperatureInput.value) : DEFAULT_TEMPERATURE;
+        if (temperatureInput) {
+            const formattedTemperature = normalizedTemperature.toFixed(1);
+            if (temperatureInput.value !== formattedTemperature) {
+                temperatureInput.value = formattedTemperature;
+            }
+        }
+
+        const normalizedHistoryLimit = messageHistoryLimitInput ? normalizeHistoryLimit(messageHistoryLimitInput.value) : DEFAULT_HISTORY_LIMIT;
+        if (messageHistoryLimitInput && messageHistoryLimitInput.value !== String(normalizedHistoryLimit)) {
+            messageHistoryLimitInput.value = normalizedHistoryLimit;
+        }
+
+        if (!currentChatData || typeof currentChatData !== 'object') {
+            currentChatData = {};
+        }
+        currentChatData.rag_top_k = normalizedTopK;
+        currentChatData.temperature = normalizedTemperature;
+        currentChatData.message_history_limit = normalizedHistoryLimit;
 
         fetch('/api/chat', {
             method: 'POST',
@@ -1380,7 +2020,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 message: messageContent,
                 chat_id: currentChatId,
                 model_id: currentModelId,
-                system_message: systemMessage
+                system_message: systemMessage,
+                rag_top_k: normalizedTopK,
+                temperature: normalizedTemperature,
+                message_history_limit: normalizedHistoryLimit
             })
         })
         .then(response => response.json())
@@ -1389,15 +2032,13 @@ document.addEventListener('DOMContentLoaded', function() {
             hideTypingIndicator();
 
             // Añadir respuesta del asistente
-            addMessageToChat('assistant', data.response);
-
-            // Mostrar link de documento Word si se generó
-            if (data.word_doc && data.word_doc.generated && data.word_doc.download_url) {
-                const linkHtml = `<div class="word-doc-link"><a href="${data.word_doc.download_url}" target="_blank" rel="noopener">📄 Descargar documentación (${data.word_doc.file_name})</a></div>`;
-                addMessageToChat('assistant', linkHtml);
-            } else if (data.word_doc && data.word_doc.error) {
-                console.warn('Error generando Word:', data.word_doc.error);
-            }
+            addMessageToChat('assistant', data.response, {
+                rawContent: data.raw_response
+            });
+            const assistantContent = (typeof data.raw_response === 'string' && data.raw_response.trim())
+                ? data.raw_response
+                : (typeof data.response === 'string' ? data.response : '');
+            cacheMessage('assistant', assistantContent);
 
             // Actualizar ID del chat si es necesario
             if (data.chat_id && (!currentChatId || currentChatId !== data.chat_id)) {
@@ -1412,7 +2053,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             console.error('Error sending message:', error);
             hideTypingIndicator();
-            addMessageToChat('assistant', 'Lo siento, ha ocurrido un error al procesar tu mensaje.');
+            const fallbackMessage = 'Lo siento, ha ocurrido un error al procesar tu mensaje.';
+            addMessageToChat('assistant', fallbackMessage);
+            cacheMessage('assistant', fallbackMessage);
         })
         .finally(() => {
             activeChatRequestController = null;
@@ -2211,6 +2854,13 @@ document.addEventListener('DOMContentLoaded', function() {
         openCamera();
     });
 
+    if (downloadConversationBtn) {
+        downloadConversationBtn.addEventListener('click', function(event) {
+            event.preventDefault();
+            exportConversationAsWord();
+        });
+    }
+
     // Event listeners para el panel de archivos
     filesPanelClose.addEventListener('click', function() {
         filesPanel.classList.remove('open');
@@ -2253,6 +2903,29 @@ document.addEventListener('DOMContentLoaded', function() {
         // Actualizar la visualización de la cola
         updateQueueDisplay();
     });
+
+    if (knowledgeBaseBtn) {
+        knowledgeBaseBtn.addEventListener('click', function() {
+            if (knowledgeBaseModal && knowledgeBaseModal.classList.contains('open')) {
+                closeKnowledgeBaseModal();
+            } else {
+                openKnowledgeBaseModal();
+            }
+        });
+    }
+
+    if (knowledgeBaseModal) {
+        const kbCloseButtons = knowledgeBaseModal.querySelectorAll('.modal-close, [data-role="close-knowledge-base"]');
+        kbCloseButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                closeKnowledgeBaseModal();
+            });
+        });
+    }
+
+    if (saveKnowledgeBaseBtn) {
+        saveKnowledgeBaseBtn.addEventListener('click', handleSaveKnowledgeBase);
+    }
 
     // Función para actualizar el texto del botón de cola según el estado del panel
     function updateQueueToggleButtonText() {
