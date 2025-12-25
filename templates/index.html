@@ -123,11 +123,11 @@
                     </div>
                     <div class="rag-settings-group">
                         <label for="rag-top-k">Top K:</label>
-                        <input type="number" id="rag-top-k" class="rag-number-input" min="1" max="20" value="3">
+                        <input type="number" id="rag-top-k" class="rag-number-input" min="1" max="{{ rag_top_k_max }}" value="{{ rag_top_k_default }}">
                         <label for="temperature-input">Temperatura:</label>
-                        <input type="number" id="temperature-input" class="rag-number-input" min="0" max="2" step="0.1" value="1.0">
+                        <input type="number" id="temperature-input" class="rag-number-input" min="0" max="2" step="0.1" value="{{ '%.1f' % temperature_default }}">
                         <label for="message-history-limit">Mensajes:</label>
-                        <input type="number" id="message-history-limit" class="rag-number-input" min="1" max="50" value="10">
+                        <input type="number" id="message-history-limit" class="rag-number-input" min="1" max="{{ history_max }}" value="{{ history_default }}">
                     </div>
                     <div class="toolbar-version" role="status" aria-label="Versión de la aplicación">
                         <span class="toolbar-version-label">V:</span>

@@ -50,41 +50,60 @@ document.addEventListener('DOMContentLoaded', function() {
     const adminResetCancelBtn = document.getElementById('admin-reset-password-cancel');
     const currentUserIsAdmin = document.body && document.body.dataset ? document.body.dataset.isAdmin === 'true' : false;
 
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+    const readIntAttr = (element, attrName, fallback) => {
+        const raw = element ? element.getAttribute(attrName) : null;
+        const parsed = raw !== null ? parseInt(raw, 10) : NaN;
+        return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const readFloatAttr = (element, attrName, fallback) => {
+        const raw = element ? element.getAttribute(attrName) : null;
+        const parsed = raw !== null ? parseFloat(raw) : NaN;
+        return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const topKMin = readIntAttr(ragTopKInput, 'min', 1);
+    const topKMax = Math.max(topKMin, readIntAttr(ragTopKInput, 'max', 20));
+    const temperatureMin = readFloatAttr(temperatureInput, 'min', 0);
+    const temperatureMax = readFloatAttr(temperatureInput, 'max', 2);
+    const historyMin = readIntAttr(messageHistoryLimitInput, 'min', 1);
+    const historyMax = Math.max(historyMin, readIntAttr(messageHistoryLimitInput, 'max', 50));
+
     const DEFAULT_RAG_TOP_K = (() => {
         if (!ragTopKInput) {
-            return 3;
+            return clamp(3, topKMin, topKMax);
         }
         const initial = ragTopKInput.defaultValue || ragTopKInput.getAttribute('value') || ragTopKInput.value;
         const parsed = parseInt(initial, 10);
         if (!Number.isFinite(parsed)) {
-            return 3;
+            return clamp(3, topKMin, topKMax);
         }
-        return Math.min(Math.max(parsed, 1), 20);
+        return clamp(parsed, topKMin, topKMax);
     })();
 
     const DEFAULT_TEMPERATURE = (() => {
         if (!temperatureInput) {
-            return 1.0;
+            return clamp(1.0, temperatureMin, temperatureMax);
         }
         const initial = temperatureInput.defaultValue || temperatureInput.getAttribute('value') || temperatureInput.value;
         const parsed = parseFloat(initial);
         if (!Number.isFinite(parsed)) {
-            return 1.0;
+            return clamp(1.0, temperatureMin, temperatureMax);
         }
-        const clamped = Math.min(Math.max(parsed, 0), 2);
+        const clamped = clamp(parsed, temperatureMin, temperatureMax);
         return Math.round(clamped * 10) / 10;
     })();
 
     const DEFAULT_HISTORY_LIMIT = (() => {
         if (!messageHistoryLimitInput) {
-            return 10;
+            return clamp(10, historyMin, historyMax);
         }
         const initial = messageHistoryLimitInput.defaultValue || messageHistoryLimitInput.getAttribute('value') || messageHistoryLimitInput.value;
         const parsed = parseInt(initial, 10);
         if (!Number.isFinite(parsed)) {
-            return 10;
+            return clamp(10, historyMin, historyMax);
         }
-        return Math.min(Math.max(parsed, 1), 50);
+        return clamp(parsed, historyMin, historyMax);
     })();
 
     function normalizeTopK(value) {
@@ -92,7 +111,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!Number.isFinite(parsed)) {
             return DEFAULT_RAG_TOP_K;
         }
-        return Math.min(Math.max(parsed, 1), 20);
+        return clamp(parsed, topKMin, topKMax);
     }
 
     function normalizeTemperature(value) {
@@ -100,7 +119,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!Number.isFinite(parsed)) {
             return DEFAULT_TEMPERATURE;
         }
-        const clamped = Math.min(Math.max(parsed, 0), 2);
+        const clamped = clamp(parsed, temperatureMin, temperatureMax);
         return Math.round(clamped * 10) / 10;
     }
 
@@ -109,7 +128,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!Number.isFinite(parsed)) {
             return DEFAULT_HISTORY_LIMIT;
         }
-        return Math.min(Math.max(parsed, 1), 50);
+        return clamp(parsed, historyMin, historyMax);
     }
 
     if (changePasswordSubmitBtn && !changePasswordSubmitBtn.dataset.originalText) {

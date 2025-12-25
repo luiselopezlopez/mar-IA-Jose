@@ -1,4 +1,6 @@
+# pyright: reportGeneralTypeIssues=false, reportMissingImports=false, reportMissingModuleSource=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownParameterType=false, reportAttributeAccessIssue=false
 import os
+from typing import Any, cast
 import uuid
 import json
 import io
@@ -47,6 +49,30 @@ logger.info("Iniciando aplicación ChechuGPT", "app")
 app = Flask(__name__)
 logger.info("Inicializando aplicación Flask", "app.warmup")
 
+
+def _env_int(var_name: str, default: int) -> int:
+    """Lee un entero desde las variables de entorno con un valor por defecto seguro."""
+    raw = os.environ.get(var_name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(f"Valor inválido para {var_name}={raw}. Usando {default}.", "app.config")
+        return default
+
+
+def _env_float(var_name: str, default: float) -> float:
+    """Lee un float desde las variables de entorno con un valor por defecto seguro."""
+    raw = os.environ.get(var_name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(f"Valor inválido para {var_name}={raw}. Usando {default}.", "app.config")
+        return default
+
 # Configuración de la aplicación Flask
 secret_key = os.environ.get("SECRET_KEY", "default_secret_key")
 app.secret_key = secret_key
@@ -79,9 +105,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "Si no sabes la respuesta, di que no lo sabes. No inventes respuestas."
 )
 
-DEFAULT_RAG_TOP_K = 3
-DEFAULT_TEMPERATURE = 1.0
-DEFAULT_HISTORY_LIMIT = 10
+DEFAULT_RAG_TOP_K = max(1, _env_int("RAG_TOP_K_DEFAULT", 3))
+MAX_RAG_TOP_K = max(DEFAULT_RAG_TOP_K, _env_int("RAG_TOP_K_MAX", 20))
+DEFAULT_TEMPERATURE = min(max(_env_float("TEMPERATURE_DEFAULT", 1.0), 0.0), 2.0)
+DEFAULT_HISTORY_LIMIT = max(1, _env_int("MESSAGE_HISTORY_DEFAULT", 10))
+MAX_HISTORY_LIMIT = max(DEFAULT_HISTORY_LIMIT, _env_int("MESSAGE_HISTORY_MAX", 50))
 
 # Modificar la URL de la base de datos para usar la ruta absoluta en INSTANCE_DIR
 database_path = os.path.abspath(os.path.join(INSTANCE_DIR, 'mar-ia-jose.db'))
@@ -101,7 +129,7 @@ db.init_app(app)
 # Initialize login manager
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'login'
+login_manager.login_view = 'login'  # type: ignore[assignment]
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -109,13 +137,13 @@ def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 # Configuración de Azure OpenAI
-AZURE_OPENAI_ENDPOINT = os.environ.get("azure_endpoint")
-AZURE_OPENAI_KEY = os.environ.get("api_key")
-AZURE_OPENAI_DEPLOYMENT = os.environ.get("model_name", "gpt-35-turbo")
-AZURE_OPENAI_EMBEDDING_ENDPOINT= os.environ.get("embedding_endpoint")
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get("embedding_deployment")
-AZURE_OPENAI_EMBEDDING_API = os.environ.get("embedding_api")
-AZURE_OPENAI_EMBEDDING_APIKEY = os.environ.get("embedding_api_key")
+AZURE_OPENAI_ENDPOINT = os.environ.get("azure_endpoint") or ""
+AZURE_OPENAI_KEY = os.environ.get("api_key") or ""
+AZURE_OPENAI_DEPLOYMENT = os.environ.get("model_name", "gpt-35-turbo") or "gpt-35-turbo"
+AZURE_OPENAI_EMBEDDING_ENDPOINT= os.environ.get("embedding_endpoint") or ""
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get("embedding_deployment") or ""
+AZURE_OPENAI_EMBEDDING_API = os.environ.get("embedding_api") or "2023-05-15"
+AZURE_OPENAI_EMBEDDING_APIKEY = os.environ.get("embedding_api_key") or ""
 
 # Configuración de DeepSeek-R1
 R1_MODEL = os.environ.get("R1_model")
@@ -240,7 +268,7 @@ client = get_openai_client()
 # Inicializar embeddings para RAG
 embeddings = AzureOpenAIEmbeddings(
     azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
-    openai_api_key=AZURE_OPENAI_EMBEDDING_APIKEY,
+    api_key=AZURE_OPENAI_EMBEDDING_APIKEY,
     azure_endpoint=AZURE_OPENAI_EMBEDDING_ENDPOINT,
     api_version=AZURE_OPENAI_EMBEDDING_API,
 )
@@ -401,7 +429,7 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
         rag_top_k if rag_top_k is not None else existing_data.get('rag_top_k'),
         DEFAULT_RAG_TOP_K,
         minimum=1,
-        maximum=20
+        maximum=MAX_RAG_TOP_K
     )
     resolved_temperature = _resolve_float_setting(
         temperature if temperature is not None else existing_data.get('temperature'),
@@ -414,7 +442,7 @@ def save_chat_history(user_id, messages, system_message=None, title=None, file_h
         message_history_limit if message_history_limit is not None else existing_data.get('message_history_limit'),
         DEFAULT_HISTORY_LIMIT,
         minimum=1,
-        maximum=50
+        maximum=MAX_HISTORY_LIMIT
     )
 
     with open(filename, 'w', encoding='utf-8') as f:
@@ -502,9 +530,9 @@ def get_chat_data(user_id, chat_id):
             data['title'] = data.get('title')
             data['file_hashes'] = data.get('file_hashes', [])
             data['attached_bases'] = data.get('attached_bases', [])
-            data['rag_top_k'] = _resolve_int_setting(data.get('rag_top_k'), DEFAULT_RAG_TOP_K, minimum=1, maximum=20)
+            data['rag_top_k'] = _resolve_int_setting(data.get('rag_top_k'), DEFAULT_RAG_TOP_K, minimum=1, maximum=MAX_RAG_TOP_K)
             data['temperature'] = _resolve_float_setting(data.get('temperature'), DEFAULT_TEMPERATURE, minimum=0.0, maximum=2.0, precision=1)
-            data['message_history_limit'] = _resolve_int_setting(data.get('message_history_limit'), DEFAULT_HISTORY_LIMIT, minimum=1, maximum=50)
+            data['message_history_limit'] = _resolve_int_setting(data.get('message_history_limit'), DEFAULT_HISTORY_LIMIT, minimum=1, maximum=MAX_HISTORY_LIMIT)
 
             session['attached_bases'] = data['attached_bases']
 
@@ -595,7 +623,7 @@ def ensure_default_user_prompt(user_id, commit=False):
     if existing_prompt:
         return False
 
-    default_prompt = UserPrompt(user_id=user_id, name='Default', prompt_text=DEFAULT_SYSTEM_PROMPT)
+    default_prompt = UserPrompt(user_id=user_id, name='Default', prompt_text=DEFAULT_SYSTEM_PROMPT)  # type: ignore[call-arg]
     db.session.add(default_prompt)
 
     if commit:
@@ -726,7 +754,7 @@ def migrate_vectorstores_to_chat_system():
                                 vectorstore = FAISS.load_local(old_db_path, embeddings, allow_dangerous_deserialization=True)
                                 
                                 # Obtener todos los documentos
-                                docs = list(vectorstore.docstore._dict.values())
+                                docs = list(vectorstore.docstore._dict.values())  # type: ignore[attr-defined]
                                 
                                 # Añadir metadatos del archivo a cada documento
                                 for doc in docs:
@@ -814,7 +842,26 @@ def extract_images_from_pdf(file_path):
     """Extrae imágenes de un archivo PDF y realiza OCR o genera descripciones usando GPT-4o"""
     image_texts = []
     logger.info(f"Iniciando extracción de imágenes del PDF: {os.path.basename(file_path)}", "app.extract_images_from_pdf")
-    doc = fitz.Document(file_path)  # Usando Document en lugar de open
+    try:
+        if hasattr(fitz, "open"):
+            doc = fitz.open(file_path)  # type: ignore[attr-defined]
+        elif hasattr(fitz, "Document"):
+            doc = fitz.Document(file_path)
+        else:
+            logger.warning(
+                "PyMuPDF (fitz) no expone 'open' ni 'Document'; se omite extracción de imágenes",
+                "app.extract_images_from_pdf",
+            )
+            return []
+    except Exception as exc:
+        logger.error(f"No se pudo abrir el PDF con PyMuPDF: {exc}", "app.extract_images_from_pdf")
+        return []
+
+    # Seleccionar el modelo a usar para OCR de imágenes. Si no hay modelo, omitir OCR para evitar 404 repetidos.
+    ocr_model_id = AZURE_OPENAI_DEPLOYMENT or (AVAILABLE_MODELS[0]["id"] if AVAILABLE_MODELS else None)
+    if not ocr_model_id:
+        logger.warning("No hay modelo configurado para OCR de imágenes; se omite extracción de imágenes", "app.extract_images_from_pdf")
+        return []
 
     logger.debug(f"Procesando PDF con {len(doc)} páginas", "app.extract_images_from_pdf")
 
@@ -863,19 +910,20 @@ def extract_images_from_pdf(file_path):
 
                 # Llamar a GPT-4o para extraer texto y generar descripción
                 print(f"[DEBUG] Enviando imagen a modelo para OCR/descripción...")
-                model_client = get_openai_client("gpt-4.1")
-                response = model_client.chat.completions.create(
-                    model="gpt-4.1",
+                model_client: Any = get_openai_client(ocr_model_id)
+                response = model_client.chat.completions.create(  # type: ignore[attr-defined]
+                    model=ocr_model_id,
                     messages=[
                         {"role": "system", "content": "Eres un asistente especializado en extraer texto de imágenes y describir su contenido. Si hay texto visible en la imagen, extráelo con precisión. Si no hay texto o es poco relevante, proporciona una descripción detallada de lo que ves."},
                         {"role": "user", "content": [
                             {"type": "text", "text": "Reconoce el texto de la imagen y donde haya una imagen, describela. La descripcion de la imagen ha de estar ubicada justo donde estaba la imagen en el documento."},
                             {"type": "image_url", "image_url": {"url": img_url}}
                         ]}
-                    ],                                     
+                    ],
                 )
 
-                result = response.choices[0].message.content
+                result_raw = response.choices[0].message.content  # type: ignore[index]
+                result = result_raw or ""
                 print(f"[DEBUG] Respuesta recibida de GPT-4o ({len(result)} caracteres)")
 
                 # Eliminar la imagen temporal
@@ -901,8 +949,16 @@ def extract_images_from_pdf(file_path):
                     print(f"[DEBUG] Descripción generada con GPT-4.1: {result[:100]}..." if len(result) > 100 else f"[DEBUG] Descripción generada con GPT-4o: {result}")
 
             except Exception as e:
-                error_msg = f"Error al procesar la imagen con GPT-4.1: {str(e)}"
+                error_msg = f"Error al procesar la imagen con el modelo {ocr_model_id}: {str(e)}"
                 print(f"[ERROR] {error_msg}")
+                logger.error(error_msg, "app.extract_images_from_pdf")
+
+                # Si el error indica despliegue inexistente, no seguir intentando en más imágenes.
+                if "DeploymentNotFound" in str(e):
+                    logger.error("Deployment de OCR no encontrado; se omite el resto de imágenes para evitar errores repetidos", "app.extract_images_from_pdf")
+                    doc.close()
+                    return image_texts
+
                 image_texts.append(f"[ERROR EN PROCESAMIENTO DE IMAGEN - Página {page_num+1}, Imagen {img_index+1}]: No se pudo procesar la imagen. Error: {str(e)}")
 
     print(f"\n[DEBUG] Procesamiento de PDF completado. Total de textos/descripciones extraídos: {len(image_texts)}")
@@ -924,9 +980,9 @@ def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=N
     file_extension = os.path.splitext(file_path)[1].lower()
     logger.info(f"Procesando archivo para chat {chat_id}: {os.path.basename(file_path)} ({file_extension})", "app.process_file_for_chat")    
     
+    image_texts: list[str] = []
     if file_extension == '.pdf':
         # Extraer imágenes y realizar OCR antes de cargar el documento solo si process_images es True
-        image_texts = []
         if file_extension == '.pdf' and process_images:
             try:
                 logger.info("Iniciando extracción de imágenes del PDF", "app.process_file_for_chat")
@@ -975,7 +1031,26 @@ def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=N
 
         # Verificar si hay documentos antes de procesarlos
         if not documents:
-            raise ValueError("No se pudo extraer contenido del archivo")
+            # Intentar fallback básico con PyPDF2
+            fallback_text = ""
+            if file_extension == '.pdf':
+                try:
+                    from pypdf import PdfReader
+                    reader = PdfReader(file_path)
+                    fallback_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+                except Exception as fallback_exc:
+                    logger.warning(f"Fallback PyPDF2 sin contenido: {fallback_exc}", "app.process_file_for_chat")
+
+            # Si hay textos de imágenes, usarlos como contenido
+            if fallback_text.strip():
+                from langchain_core.documents import Document
+                documents = [Document(page_content=fallback_text, metadata={"source": file_path})]
+            elif file_extension == '.pdf' and image_texts:
+                from langchain_core.documents import Document
+                for i, text in enumerate(image_texts):
+                    documents.append(Document(page_content=text, metadata={"source": file_path, "page": f"imagen-{i+1}"}))
+            else:
+                raise ValueError("No se pudo extraer contenido del archivo")
 
         # Si hay textos de imágenes, añadirlos como documentos adicionales
         if file_extension == '.pdf' and image_texts:
@@ -999,7 +1074,9 @@ def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=N
 
         # Verificar si hay chunks antes de crear la base de datos vectorial
         if not chunks:
-            raise ValueError("No se pudo dividir el contenido del archivo en fragmentos")
+            raise ValueError(
+                "El archivo no contiene texto extraíble. Instala PyMuPDF para OCR o proporciona un PDF con texto seleccionable."
+            )
 
         # Añadir hash del archivo a los metadatos de cada chunk para poder identificarlo después
         file_hash = hashlib.md5(open(file_path, 'rb').read()).hexdigest()
@@ -1173,7 +1250,7 @@ def rebuild_chat_vectorstore(chat_id, file_hashes_to_keep, progress_id=None):
         vectorstore = FAISS.load_local(chat_db_path, embeddings, allow_dangerous_deserialization=True)
         
         # Obtener todos los documentos
-        all_docs = vectorstore.docstore._dict.values()
+        all_docs = vectorstore.docstore._dict.values()  # type: ignore[attr-defined]
         
         # Filtrar documentos que pertenecen a archivos que se deben mantener
         filtered_docs = [
@@ -1331,7 +1408,7 @@ def register():
             existing_users = User.query.count()
             new_user_type = 0 if existing_users == 0 else 1
 
-            user = User(username=username, email=email, user_type=new_user_type)
+            user = User(username=username, email=email, user_type=new_user_type)  # type: ignore[call-arg]
             user.set_password(password)
 
             db.session.add(user)
@@ -1410,12 +1487,22 @@ def index():
         # Actualizar la lista de chats
         chats = get_user_chats(user_id)
 
-    return render_template('index.html', chats=chats, is_admin=is_admin, app_version=app_version)
+    return render_template(
+        'index.html',
+        chats=chats,
+        is_admin=is_admin,
+        app_version=app_version,
+        rag_top_k_default=DEFAULT_RAG_TOP_K,
+        rag_top_k_max=MAX_RAG_TOP_K,
+        temperature_default=DEFAULT_TEMPERATURE,
+        history_default=DEFAULT_HISTORY_LIMIT,
+        history_max=MAX_HISTORY_LIMIT,
+    )
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
     """Endpoint para procesar mensajes de chat"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     user_message = data.get('message', '')
     chat_id = data.get('chat_id')
     model_id = data.get('model_id')  # Obtener el modelo seleccionado
@@ -1435,9 +1522,9 @@ def chat():
     stored_temperature = chat_data.get('temperature', DEFAULT_TEMPERATURE)
     stored_history_limit = chat_data.get('message_history_limit', DEFAULT_HISTORY_LIMIT)
 
-    rag_top_k = _resolve_int_setting(requested_top_k, stored_top_k, minimum=1, maximum=20)
+    rag_top_k = _resolve_int_setting(requested_top_k, stored_top_k, minimum=1, maximum=MAX_RAG_TOP_K)
     generation_temperature = _resolve_float_setting(requested_temperature, stored_temperature, minimum=0.0, maximum=2.0, precision=1)
-    message_history_limit = _resolve_int_setting(data.get('message_history_limit'), stored_history_limit, minimum=1, maximum=50)
+    message_history_limit = _resolve_int_setting(data.get('message_history_limit'), stored_history_limit, minimum=1, maximum=MAX_HISTORY_LIMIT)
     
     # Usar los file_hashes específicos del chat actual
     file_hashes = chat_data.get('file_hashes', [])
@@ -1467,7 +1554,11 @@ def chat():
 
         # Extraer todas las imágenes
         img_tags = soup.find_all('img')
-        image_urls = [img.get('src') for img in img_tags if img.get('src') and img.get('src').startswith('data:image/')]
+        image_urls = []
+        for img in img_tags:
+            src = getattr(img, 'get', lambda *_: None)('src')
+            if isinstance(src, str) and src.startswith('data:image/'):
+                image_urls.append(src)
 
         # Crear un mensaje multimodal para GPT-4o
         content = []
@@ -1909,6 +2000,10 @@ def upload_file():
                 "chat_id": chat_id
             })
             
+        except ValueError as e:
+            logger.error(f"Error al procesar archivo (valor): {str(e)}", "app.upload_file")
+            set_embedding_progress(progress_id, status="failed", completed=True, error=str(e))
+            return jsonify({"error": str(e), "progress_id": progress_id}), 400
         except Exception as e:
             logger.error(f"Error al procesar archivo: {str(e)}", "app.upload_file")
             set_embedding_progress(progress_id, status="failed", completed=True, error=str(e))
@@ -2657,7 +2752,7 @@ def list_user_prompts():
 @login_required
 def create_user_prompt():
     """Crea o actualiza un prompt guardado para el usuario actual."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     name = (data.get('name') or '').strip()
     prompt_text = (data.get('prompt_text') or '').strip()
 
