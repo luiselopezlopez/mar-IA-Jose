@@ -343,14 +343,19 @@
                 <p>Selecciona cómo quieres procesar este archivo PDF:</p>
                 <div class="pdf-options">
                     <div class="option">
-                        <input type="radio" id="process-with-ocr" name="pdf-process-option" value="true" checked>
+                        <input type="radio" id="process-with-ocr" name="pdf-process-option" value="full" checked>
                         <label for="process-with-ocr">Procesar texto y realizar OCR en imágenes</label>
                         <p class="option-description">Extrae el texto del PDF y también analiza las imágenes para extraer su contenido textual.</p>
                     </div>
                     <div class="option">
-                        <input type="radio" id="process-text-only" name="pdf-process-option" value="false">
+                        <input type="radio" id="process-text-only" name="pdf-process-option" value="text_only">
                         <label for="process-text-only">Procesar solo el texto del PDF</label>
                         <p class="option-description">Extrae solo el texto del PDF, ignorando el contenido de las imágenes.</p>
+                    </div>
+                    <div class="option">
+                        <input type="radio" id="process-ocr-only" name="pdf-process-option" value="ocr_only">
+                        <label for="process-ocr-only">OCR consolidado por página</label>
+                        <p class="option-description">Si la página tiene imágenes, se renderiza completa y se hace OCR+descripción para vectorizar; las páginas solo texto se procesan como texto.</p>
                     </div>
                 </div>
             </div>

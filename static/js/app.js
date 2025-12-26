@@ -2092,7 +2092,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // Para otros tipos de archivo, añadir a la cola y procesar
-        addToUploadQueue(file, true);
+        addToUploadQueue(file, 'full');
     }
 
     // Función para mostrar el modal de opciones de PDF
@@ -2123,12 +2123,13 @@ document.addEventListener('DOMContentLoaded', function() {
         // Añadir nuevo event listener
         newProcessBtn.addEventListener('click', function() {
             // Obtener la opción seleccionada
-            const processWithOcr = document.getElementById('process-with-ocr').checked;
+            const selected = modal.querySelector('input[name="pdf-process-option"]:checked');
+            const processMode = selected ? selected.value : 'full';
             modal.classList.remove('open');
 
             // Procesar todos los archivos PDF con la misma opción
             files.forEach(file => {
-                addToUploadQueue(file, processWithOcr);
+                addToUploadQueue(file, processMode);
             });
         });
 
@@ -2141,12 +2142,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Función para añadir un archivo a la cola de procesamiento
-    function addToUploadQueue(file, processImages) {
+    function addToUploadQueue(file, processMode = 'full') {
         // Crear un elemento de cola
         const queueItem = {
             id: Date.now() + Math.random().toString(36).substr(2, 9),
             file: file,
-            processImages: processImages,
+            processMode: processMode,
             status: 'pending',
             logs: [],
             progressId: null,
@@ -2356,11 +2357,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Función para procesar y subir el archivo
     function processAndUploadFile(queueItem) {
         const file = queueItem.file;
-        const processImages = queueItem.processImages;
+        const processMode = queueItem.processMode || 'full';
 
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('process_images', processImages);
+        formData.append('process_mode', processMode);
         if (queueItem.progressId) {
             formData.append('upload_id', queueItem.progressId);
         }
@@ -2855,7 +2856,7 @@ document.addEventListener('DOMContentLoaded', function() {
             imageFiles.forEach(file => attachImage(file));
 
             // Procesar otros archivos directamente
-            otherFiles.forEach(file => addToUploadQueue(file, true));
+            otherFiles.forEach(file => addToUploadQueue(file, 'full'));
 
             // Si hay PDFs, mostrar el modal de opciones solo una vez
             if (pdfFiles.length > 0) {

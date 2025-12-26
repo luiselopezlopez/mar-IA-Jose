@@ -140,6 +140,7 @@ def load_user(user_id):
 AZURE_OPENAI_ENDPOINT = os.environ.get("azure_endpoint") or ""
 AZURE_OPENAI_KEY = os.environ.get("api_key") or ""
 AZURE_OPENAI_DEPLOYMENT = os.environ.get("model_name", "gpt-35-turbo") or "gpt-35-turbo"
+AZURE_OPENAI_API_VERSION = os.environ.get("api_version") or os.environ.get("_version") or "2023-05-15"
 AZURE_OPENAI_EMBEDDING_ENDPOINT= os.environ.get("embedding_endpoint") or ""
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get("embedding_deployment") or ""
 AZURE_OPENAI_EMBEDDING_API = os.environ.get("embedding_api") or "2023-05-15"
@@ -170,7 +171,7 @@ def get_available_models():
             "name": AZURE_OPENAI_DEPLOYMENT,
             "endpoint": AZURE_OPENAI_ENDPOINT,
             "api_key": AZURE_OPENAI_KEY,
-            "api_version": os.environ.get("_version", "2023-05-15")
+            "api_version": AZURE_OPENAI_API_VERSION,
         }
     ]    # Añadir DeepSeek-R1 si está configurado
     if R1_MODEL and R1_ENDPOINT and R1_CREDENTIAL:
@@ -217,7 +218,7 @@ def get_openai_client(model_id=None):
     if not model_id:
         return AzureOpenAI(
             api_key=AZURE_OPENAI_KEY,
-            api_version=os.environ.get("api_version", "2023-05-15"),
+            api_version=AZURE_OPENAI_API_VERSION,
             azure_endpoint=AZURE_OPENAI_ENDPOINT
         )
 
@@ -229,7 +230,7 @@ def get_openai_client(model_id=None):
         logger.warning(f"Modelo solicitado '{model_id}' no encontrado, usando predeterminado", "app.get_openai_client")
         return AzureOpenAI(
             api_key=AZURE_OPENAI_KEY,
-            api_version=os.environ.get("api_version", "2023-05-15"),
+            api_version=AZURE_OPENAI_API_VERSION,
             azure_endpoint=AZURE_OPENAI_ENDPOINT
         )
     
@@ -250,7 +251,7 @@ def get_openai_client(model_id=None):
             # Fallback al cliente predeterminado
             return AzureOpenAI(
                 api_key=AZURE_OPENAI_KEY,
-                api_version=os.environ.get("api_version", "2023-05-15"),
+                api_version=AZURE_OPENAI_API_VERSION,
                 azure_endpoint=AZURE_OPENAI_ENDPOINT
             )
 
@@ -884,6 +885,16 @@ def extract_images_from_pdf(file_path):
             image = Image.open(io.BytesIO(image_bytes))
             print(f"[DEBUG] Dimensiones de la imagen: {image.width}x{image.height}")
 
+            # Omitir imágenes diminutas para reducir carga y errores de rate limit
+            MIN_SIDE = 64
+            MIN_AREA = 4096
+            if image.width < MIN_SIDE and image.height < MIN_SIDE and (image.width * image.height) < MIN_AREA:
+                logger.debug(
+                    f"Omitiendo imagen diminuta ({image.width}x{image.height}) en página {page_num+1}, índice {img_index+1}",
+                    "app.extract_images_from_pdf",
+                )
+                continue
+
             try:
                 # Convertir imagen RGBA a RGB si es necesario
                 if image.mode == 'RGBA':
@@ -911,20 +922,38 @@ def extract_images_from_pdf(file_path):
                 # Llamar a GPT-4o para extraer texto y generar descripción
                 print(f"[DEBUG] Enviando imagen a modelo para OCR/descripción...")
                 model_client: Any = get_openai_client(ocr_model_id)
-                response = model_client.chat.completions.create(  # type: ignore[attr-defined]
-                    model=ocr_model_id,
-                    messages=[
-                        {"role": "system", "content": "Eres un asistente especializado en extraer texto de imágenes y describir su contenido. Si hay texto visible en la imagen, extráelo con precisión. Si no hay texto o es poco relevante, proporciona una descripción detallada de lo que ves."},
-                        {"role": "user", "content": [
-                            {"type": "text", "text": "Reconoce el texto de la imagen y donde haya una imagen, describela. La descripcion de la imagen ha de estar ubicada justo donde estaba la imagen en el documento."},
-                            {"type": "image_url", "image_url": {"url": img_url}}
-                        ]}
-                    ],
-                )
+
+                # Reintentos básicos ante rate limits
+                response = None
+                attempt = 0
+                while attempt < 3 and response is None:
+                    attempt += 1
+                    try:
+                        response = model_client.chat.completions.create(  # type: ignore[attr-defined]
+                            model=ocr_model_id,
+                            messages=[
+                                {"role": "system", "content": "Eres un asistente especializado en extraer texto de imágenes y describir su contenido. Si hay texto visible en la imagen, extráelo con precisión. Si no hay texto o es poco relevante, proporciona una descripción detallada de lo que ves."},
+                                {"role": "user", "content": [
+                                    {"type": "text", "text": "Reconoce el texto de la imagen y donde haya una imagen, describela. La descripcion de la imagen ha de estar ubicada justo donde estaba la imagen en el documento."},
+                                    {"type": "image_url", "image_url": {"url": img_url}}
+                                ]}
+                            ],
+                        )
+                    except Exception as exc:  # pragma: no cover - resiliencia runtime
+                        if is_rate_limit_error(exc) and attempt < 3:
+                            wait_time = min(2 * attempt, 6)
+                            logger.warning(
+                                f"Rate limit al procesar imagen (intento {attempt}/3). Reintentando en {wait_time}s...",
+                                "app.extract_images_from_pdf",
+                            )
+                            time.sleep(wait_time)
+                            continue
+                        # Propagar el error para manejo posterior
+                        raise
 
                 result_raw = response.choices[0].message.content  # type: ignore[index]
                 result = result_raw or ""
-                print(f"[DEBUG] Respuesta recibida de GPT-4o ({len(result)} caracteres)")
+                print(f"[DEBUG] Respuesta recibida de {ocr_model_id} ({len(result)} caracteres)")
 
                 # Eliminar la imagen temporal
                 os.remove(temp_img_path)
@@ -953,6 +982,9 @@ def extract_images_from_pdf(file_path):
                 print(f"[ERROR] {error_msg}")
                 logger.error(error_msg, "app.extract_images_from_pdf")
 
+                # Tras error, esperar un poco para no disparar más rate limits en bucles grandes
+                time.sleep(1)
+
                 # Si el error indica despliegue inexistente, no seguir intentando en más imágenes.
                 if "DeploymentNotFound" in str(e):
                     logger.error("Deployment de OCR no encontrado; se omite el resto de imágenes para evitar errores repetidos", "app.extract_images_from_pdf")
@@ -965,25 +997,30 @@ def extract_images_from_pdf(file_path):
     doc.close()
     return image_texts
 
-def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=None):
+def process_file_for_chat(file_path, chat_id, process_mode="full", progress_id=None):
     """Procesa un archivo para RAG y lo añade a la base vectorial del chat específico
     
     Args:
         file_path: Ruta al archivo a procesar
         chat_id: ID del chat al que pertenece el archivo
-        process_images: Si es True, procesa las imágenes en PDFs con OCR. Si es False, solo procesa el texto.
+        process_mode: "full" (texto + OCR por imagen), "text_only" (solo texto), "ocr_only" (OCR consolidado por página con imágenes).
         progress_id: ID para seguimiento del progreso
     
     Returns:
         tuple: (file_hash, num_chunks) - hash del archivo y número de fragmentos procesados
     """
     file_extension = os.path.splitext(file_path)[1].lower()
-    logger.info(f"Procesando archivo para chat {chat_id}: {os.path.basename(file_path)} ({file_extension})", "app.process_file_for_chat")    
-    
+    logger.info(f"Procesando archivo para chat {chat_id}: {os.path.basename(file_path)} ({file_extension})", "app.process_file_for_chat")
+
+    process_mode = process_mode or "full"
+    if process_mode not in {"full", "text_only", "ocr_only"}:
+        process_mode = "full"
+
     image_texts: list[str] = []
+    page_ocr_texts: list[tuple[int, str]] = []  # (page_index, text)
     if file_extension == '.pdf':
-        # Extraer imágenes y realizar OCR antes de cargar el documento solo si process_images es True
-        if file_extension == '.pdf' and process_images:
+        # Extraer imágenes y realizar OCR por imagen (modo completo)
+        if process_mode == "full":
             try:
                 logger.info("Iniciando extracción de imágenes del PDF", "app.process_file_for_chat")
                 image_texts = extract_images_from_pdf(file_path)
@@ -991,8 +1028,66 @@ def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=N
                 error_msg = f"Error al extraer imágenes del PDF: {str(e)}"
                 logger.error(error_msg, "app.process_file_for_chat")
                 print(error_msg)
-                # Continuar con el procesamiento del PDF sin las imágenes
-                image_texts = []  # Asegurar que está vacío para no afectar el resto del proceso
+                image_texts = []  # No bloquear el resto del proceso
+
+        # OCR consolidado por página si se solicitó
+        if process_mode == "ocr_only":
+            doc = None
+            try:
+                doc = fitz.open(file_path)
+                ocr_model_id = AZURE_OPENAI_DEPLOYMENT or (AVAILABLE_MODELS[0]["id"] if AVAILABLE_MODELS else None)
+                if not ocr_model_id:
+                    logger.warning("No hay modelo configurado para OCR de imágenes (ocr_only)", "app.process_file_for_chat")
+                else:
+                    for page_idx, page in enumerate(doc):
+                        images = page.get_images(full=True)
+                        if not images:
+                            continue
+                        # Renderizar página completa a imagen
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        buffered = io.BytesIO()
+                        img.save(buffered, format="JPEG")
+                        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                        img_url = f"data:image/jpeg;base64,{img_base64}"
+
+                        # Reintentos ante rate limit
+                        response = None
+                        attempt = 0
+                        while attempt < 3 and response is None:
+                            attempt += 1
+                            try:
+                                client = get_openai_client(ocr_model_id)
+                                response = client.chat.completions.create(  # type: ignore[attr-defined]
+                                    model=ocr_model_id,
+                                    messages=[
+                                        {"role": "system", "content": "Eres un asistente especializado en extraer texto de páginas completas (imagen renderizada) y describir su contenido visual. Devuelve texto legible y una breve descripción si aplica."},
+                                        {"role": "user", "content": [
+                                            {"type": "text", "text": "Haz OCR de toda la página y describe brevemente las partes visuales relevantes si las hay."},
+                                            {"type": "image_url", "image_url": {"url": img_url}},
+                                        ]},
+                                    ],
+                                )
+                            except Exception as exc:  # pragma: no cover
+                                if is_rate_limit_error(exc) and attempt < 3:
+                                    wait_time = min(2 * attempt, 6)
+                                    logger.warning(
+                                        f"Rate limit OCR página {page_idx+1} (intento {attempt}/3). Esperando {wait_time}s",
+                                        "app.process_file_for_chat",
+                                    )
+                                    time.sleep(wait_time)
+                                    continue
+                                raise
+
+                        if response:
+                            result_raw = response.choices[0].message.content  # type: ignore[index]
+                            page_ocr_texts.append((page_idx, result_raw or ""))
+                        time.sleep(0.5)  # pequeño respiro entre páginas con imágenes
+            except Exception as exc:
+                logger.error(f"Error en OCR consolidado de PDF: {exc}", "app.process_file_for_chat")
+            finally:
+                if doc:
+                    doc.close()
 
         # Cargar el documento normalmente
         try:
@@ -1052,17 +1147,44 @@ def process_file_for_chat(file_path, chat_id, process_images=True, progress_id=N
             else:
                 raise ValueError("No se pudo extraer contenido del archivo")
 
-        # Si hay textos de imágenes, añadirlos como documentos adicionales
-        if file_extension == '.pdf' and image_texts:
-            # Crear un documento adicional con los textos de las imágenes
+        # Si hay textos de imágenes, añadirlos como documentos adicionales (modo full)
+        if file_extension == '.pdf' and image_texts and process_mode == "full":
+            from langchain_core.documents import Document
             for i, text in enumerate(image_texts):
-                # Añadir cada texto de imagen como un documento separado
-                from langchain_core.documents import Document
                 img_doc = Document(
                     page_content=text,
-                    metadata={"source": file_path, "page": f"imagen-{i+1}"}
+                    metadata={"source": file_path, "page": f"imagen-{i+1}", "mode": "full_ocr"}
                 )
                 documents.append(img_doc)
+
+        # Para modo ocr_only: reemplazar páginas con imágenes por su OCR consolidado
+        if file_extension == '.pdf' and process_mode == "ocr_only" and page_ocr_texts:
+            # Identificar páginas con imágenes
+            pages_with_images = {idx for idx, _ in page_ocr_texts}
+
+            filtered_docs = []
+            for doc in documents:
+                page_meta = doc.metadata.get("page")
+                try:
+                    page_idx = int(page_meta) if page_meta is not None else None
+                except (TypeError, ValueError):
+                    page_idx = None
+
+                if page_idx is not None and page_idx in pages_with_images:
+                    # Omitir el texto original de esas páginas para no duplicar
+                    continue
+                filtered_docs.append(doc)
+
+            from langchain_core.documents import Document
+            for page_idx, text in page_ocr_texts:
+                filtered_docs.append(
+                    Document(
+                        page_content=text,
+                        metadata={"source": file_path, "page": page_idx + 1, "mode": "ocr_page"}
+                    )
+                )
+
+            documents = filtered_docs
 
         # Dividir documentos en chunks
         text_splitter = RecursiveCharacterTextSplitter(
@@ -1918,7 +2040,14 @@ def upload_file():
         return jsonify({"error": "No se proporcionó archivo"}), 400
     
     file = request.files['file']
-    process_images = request.form.get('process_images', 'true').lower() == 'true'
+    process_mode = request.form.get('process_mode')
+    if not process_mode:
+        # compatibilidad con booleano anterior
+        process_images_legacy = request.form.get('process_images', 'true').lower() == 'true'
+        process_mode = 'full' if process_images_legacy else 'text_only'
+
+    if process_mode not in {'full', 'text_only', 'ocr_only'}:
+        process_mode = 'full'
     progress_id = request.form.get('upload_id') or str(uuid.uuid4())
     
     if file.filename == '':
@@ -1942,7 +2071,7 @@ def upload_file():
             file.save(file_path)
             
             # Procesar archivo para RAG y añadirlo al chat actual
-            file_hash, num_chunks, chunks = process_file_for_chat(file_path, chat_id, process_images, progress_id=progress_id)
+            file_hash, num_chunks, chunks = process_file_for_chat(file_path, chat_id, process_mode, progress_id=progress_id)
             
             # Guardar referencia al archivo en la sesión
             if 'file_hashes' not in session:
