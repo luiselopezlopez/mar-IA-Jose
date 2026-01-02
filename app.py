@@ -932,9 +932,9 @@ def extract_images_from_pdf(file_path):
                         response = model_client.chat.completions.create(  # type: ignore[attr-defined]
                             model=ocr_model_id,
                             messages=[
-                                {"role": "system", "content": "Eres un asistente especializado en extraer texto de imágenes y describir su contenido. Si hay texto visible en la imagen, extráelo con precisión. Si no hay texto o es poco relevante, proporciona una descripción detallada de lo que ves."},
+                                {"role": "system", "content": "Eres un asistente especializado en extraer texto de imágenes y describir su contenido. Si hay texto visible en la imagen, extráelo con precisión. Si no hay texto o es poco relevante, proporciona una descripción detallada de lo que ves. No puedes realizar sugerencias sobre acciones posteriores ni añadir nada más."},
                                 {"role": "user", "content": [
-                                    {"type": "text", "text": "Reconoce el texto de la imagen y donde haya una imagen, describela. La descripcion de la imagen ha de estar ubicada justo donde estaba la imagen en el documento."},
+                                    {"type": "text", "text": "Reconoce el texto de la imagen y donde haya una imagen, describela. La descripcion de la imagen ha de estar ubicada justo donde estaba la imagen en el documento. No añadas nada, solo devuelve el texto reconocido y las descripciones de las imagenes. No sugieras acciones posteriores ni nada más."},
                                     {"type": "image_url", "image_url": {"url": img_url}}
                                 ]}
                             ],
