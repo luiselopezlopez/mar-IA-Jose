@@ -1,0 +1,313 @@
+/* ============================================================
+   Mobile responsive styles — optimised for iPhone 16
+   iPhone 16 viewport: 393 × 852 CSS pixels (portrait)
+                       852 × 393 CSS pixels (landscape)
+   ============================================================ */
+
+/* ----- Overlay shown behind the open sidebar ----- */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.45);
+    z-index: 1099;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sidebar-overlay.active {
+    display: block;
+}
+
+/* ----- Mobile header bar (hidden on desktop) ----- */
+.mobile-header {
+    display: none;
+}
+
+/* ============================================================
+   Responsive breakpoint: ≤ 767 px  (phones, iPhone 16)
+   ============================================================ */
+@media (max-width: 767px) {
+
+    /* ---- Mobile header ---- */
+    .mobile-header {
+        display: flex;
+        align-items: center;
+        padding: 10px 16px;
+        background-color: #0078d4;
+        color: white;
+        min-height: 52px;
+        flex-shrink: 0;
+        /* Safe-area top padding for iPhone notch / Dynamic Island */
+        padding-top: max(10px, env(safe-area-inset-top));
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
+    }
+
+    .mobile-sidebar-toggle {
+        background: none;
+        border: none;
+        color: white;
+        font-size: 22px;
+        cursor: pointer;
+        padding: 4px 8px 4px 0;
+        line-height: 1;
+        flex-shrink: 0;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .mobile-header-title {
+        font-size: 17px;
+        font-weight: 600;
+        flex-grow: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .mobile-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+    }
+
+    .mobile-header .theme-toggle {
+        background: none;
+        border: none;
+        color: white;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ---- App container ---- */
+    .app-container {
+        flex-direction: column;
+        height: 100dvh; /* dynamic viewport height – accounts for Safari's collapsible address bar and toolbar */
+    }
+
+    /* ---- Sidebar: off-canvas slide-in ---- */
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 82%;
+        max-width: 320px;
+        z-index: 1100;
+        transform: translateX(-100%);
+        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+        /* Safe-area padding */
+        padding-top: env(safe-area-inset-top);
+        padding-left: env(safe-area-inset-left);
+    }
+
+    .sidebar.mobile-open {
+        transform: translateX(0);
+    }
+
+    /* ---- Main content fills remaining height ---- */
+    .main-content {
+        flex: 1 1 0;
+        min-height: 0;
+        width: 100%;
+    }
+
+    .chat-container {
+        height: 100%;
+    }
+
+    /* ---- Chat messages area ---- */
+    .chat-messages {
+        padding: 12px;
+    }
+
+    .message {
+        max-width: 92%;
+    }
+
+    /* ---- Chat input ---- */
+    .chat-input-container {
+        padding: 8px 10px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+    }
+
+    #chat-input {
+        height: 72px;
+        font-size: 16px; /* prevents iOS auto-zoom on focus */
+    }
+
+    #send-btn {
+        padding: 0 14px;
+        font-size: 15px;
+    }
+
+    /* ---- Bottom toolbar: horizontal scroll, no wrap ---- */
+    .bottom-toolbar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 8px;
+        padding: 6px 10px;
+        padding-left: max(10px, env(safe-area-inset-left));
+        padding-right: max(10px, env(safe-area-inset-right));
+        scrollbar-width: none; /* Firefox */
+    }
+
+    .bottom-toolbar::-webkit-scrollbar {
+        display: none; /* Chrome/Safari */
+    }
+
+    .toolbar-btn {
+        white-space: nowrap;
+        flex-shrink: 0;
+        padding: 6px 10px;
+        font-size: 13px;
+    }
+
+    .model-selection-group {
+        flex-shrink: 0;
+        gap: 4px;
+    }
+
+    .model-selection-group label {
+        font-size: 12px;
+    }
+
+    .model-select {
+        font-size: 12px;
+        padding: 4px 6px;
+        max-width: 130px;
+    }
+
+    .system-message-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
+        font-size: 13px;
+        padding: 6px 10px;
+    }
+
+    .rag-settings-group {
+        flex-shrink: 0;
+        gap: 4px;
+    }
+
+    .rag-settings-group label {
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    .rag-number-input {
+        width: 54px;
+        font-size: 12px;
+        padding: 4px 6px;
+    }
+
+    .toolbar-version {
+        flex-shrink: 0;
+        margin-left: 0;
+        font-size: 0.8rem;
+    }
+
+    .file-upload-label {
+        white-space: nowrap;
+        flex-shrink: 0;
+        font-size: 13px;
+    }
+
+    /* ---- Files & queue panels: full width ---- */
+    .files-panel,
+    .queue-panel {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    /* When both panels are open the second one shouldn't shift
+       beyond the screen on mobile */
+    .files-panel.open + .queue-panel.open {
+        transform: translateX(-100%);
+    }
+
+    /* ---- Modals: full-screen on mobile ---- */
+    .modal-content {
+        width: 100%;
+        max-width: 100%;
+        min-height: 100%;
+        border-radius: 0;
+        margin: 0;
+    }
+
+    .modal {
+        align-items: flex-end; /* sheet-style bottom modal */
+    }
+
+    .modal-content.modal-wide {
+        width: 100%;
+        min-height: 85vh;
+        max-height: 95vh;
+        border-radius: 14px 14px 0 0;
+    }
+
+    .knowledge-base-modal-content {
+        width: 100%;
+        border-radius: 14px 14px 0 0;
+    }
+
+    /* ---- Camera modal ---- */
+    .camera-container {
+        width: 95%;
+    }
+
+    /* ---- Welcome message ---- */
+    .welcome-message {
+        margin-top: 40px;
+        padding: 0 16px;
+    }
+
+    .welcome-message h1 {
+        font-size: 1.4rem;
+    }
+}
+
+/* ============================================================
+   Landscape orientation on iPhone 16
+   ============================================================ */
+@media (max-width: 852px) and (orientation: landscape) and (max-height: 430px) {
+
+    .mobile-header {
+        min-height: 44px;
+        padding-top: max(8px, env(safe-area-inset-top));
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
+    }
+
+    #chat-input {
+        height: 52px;
+    }
+
+    .bottom-toolbar {
+        padding: 4px 8px;
+    }
+
+    .chat-messages {
+        padding: 8px 12px;
+    }
+}
+
+/* ============================================================
+   Dark-mode overrides for mobile elements
+   ============================================================ */
+body.dark-mode .mobile-header {
+    background-color: #1a1a2e;
+    border-bottom: 1px solid #333;
+}
+
+body.dark-mode .mobile-sidebar-toggle,
+body.dark-mode .mobile-header .theme-toggle {
+    color: #e0e0e0;
+}
