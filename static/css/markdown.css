@@ -125,3 +125,137 @@ body.dark-mode th {
 body.dark-mode table, body.dark-mode th, body.dark-mode td {
     border-color: #444;
 }
+
+/* Contenedor de bloque de código con encabezado */
+.code-block-wrapper {
+    margin: 10px 0;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.code-block-wrapper pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+}
+
+/* Encabezado del bloque de código */
+.code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: #e8e8e8;
+    padding: 4px 10px;
+    font-size: 0.8em;
+    border-bottom: 1px solid #ddd;
+}
+
+.code-lang {
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Botón Ejecutar */
+.run-code-btn {
+    background-color: #0078d4;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.run-code-btn:hover:not(:disabled) {
+    background-color: #005fa3;
+}
+
+.run-code-btn:disabled {
+    background-color: #7ab3d9;
+    cursor: not-allowed;
+}
+
+/* Área de salida del código */
+.code-output {
+    padding: 8px 12px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.88em;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-top: 1px solid #ddd;
+}
+
+.code-output-loading {
+    background-color: #f0f0f0;
+    color: #888;
+    font-style: italic;
+}
+
+.code-output-success {
+    background-color: #f0fff0;
+    color: #1a7a1a;
+}
+
+.code-output-error {
+    background-color: #fff0f0;
+    color: #b00020;
+}
+
+.code-output-stderr {
+    background-color: #fffbf0;
+    color: #7a5a00;
+}
+
+/* Modo oscuro para bloques de código con encabezado */
+body.dark-mode .code-block-wrapper {
+    border-color: #444;
+}
+
+body.dark-mode .code-block-header {
+    background-color: #333;
+    border-bottom-color: #444;
+}
+
+body.dark-mode .code-lang {
+    color: #aaa;
+}
+
+body.dark-mode .run-code-btn {
+    background-color: #1a8fd1;
+}
+
+body.dark-mode .run-code-btn:hover:not(:disabled) {
+    background-color: #136ba0;
+}
+
+body.dark-mode .run-code-btn:disabled {
+    background-color: #2a5f7a;
+}
+
+body.dark-mode .code-output {
+    border-top-color: #444;
+}
+
+body.dark-mode .code-output-loading {
+    background-color: #2a2a2a;
+    color: #888;
+}
+
+body.dark-mode .code-output-success {
+    background-color: #1a2e1a;
+    color: #6fcf6f;
+}
+
+body.dark-mode .code-output-error {
+    background-color: #2e1a1a;
+    color: #f08080;
+}
+
+body.dark-mode .code-output-stderr {
+    background-color: #2e2a1a;
+    color: #d4b06a;
+}

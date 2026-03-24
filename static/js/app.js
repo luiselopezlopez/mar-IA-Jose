@@ -1546,6 +1546,58 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    async function executeCode(codeId) {
+        const codeEl = document.getElementById(codeId);
+        const outputEl = document.getElementById('output-' + codeId);
+        if (!codeEl || !outputEl) {
+            return;
+        }
+
+        const code = codeEl.textContent;
+        outputEl.style.display = 'block';
+        outputEl.className = 'code-output code-output-loading';
+        outputEl.textContent = 'Ejecutando…';
+
+        try {
+            const response = await fetch('/api/execute_code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code })
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                outputEl.className = 'code-output code-output-error';
+                outputEl.textContent = err.error || 'Error al ejecutar el código.';
+                return;
+            }
+
+            const result = await response.json();
+            const hasOutput = result.output && result.output.trim();
+            const hasError = result.error && result.error.trim();
+
+            if (hasError && result.exit_code !== 0) {
+                outputEl.className = 'code-output code-output-error';
+                outputEl.textContent = result.error.trim();
+            } else if (hasOutput) {
+                outputEl.className = 'code-output code-output-success';
+                outputEl.textContent = result.output.trim();
+                if (hasError) {
+                    outputEl.textContent += '\n' + result.error.trim();
+                }
+            } else if (hasError) {
+                outputEl.className = 'code-output code-output-stderr';
+                outputEl.textContent = result.error.trim();
+            } else {
+                outputEl.className = 'code-output code-output-success';
+                outputEl.textContent = '(sin salida)';
+            }
+        } catch (err) {
+            outputEl.className = 'code-output code-output-error';
+            outputEl.textContent = 'Error de red al ejecutar el código.';
+        }
+    }
+
     function attachExportButton(messageDiv) {
         if (!messageDiv || messageDiv.querySelector('.message-toolbar')) {
             return;
@@ -1835,8 +1887,31 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Convertir Markdown a HTML
         // Primero manejamos los bloques de código
-        content = content.replace(/```([\s\S]*?)```/g, function(match, code) {
-            return '<pre><code>' + code.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code></pre>';
+        content = content.replace(/```(\w+)?\n?([\s\S]*?)```/g, function(match, lang, code) {
+            const escapedCode = (code || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            if (lang && lang.toLowerCase() === 'python') {
+                const codeId = 'pycode-' + Math.random().toString(36).substr(2, 9);
+                return (
+                    '<div class="code-block-wrapper">' +
+                        '<div class="code-block-header">' +
+                            '<span class="code-lang">Python</span>' +
+                            '<button type="button" class="run-code-btn" data-code-id="' + codeId + '">▶ Ejecutar</button>' +
+                        '</div>' +
+                        '<pre><code id="' + codeId + '">' + escapedCode + '</code></pre>' +
+                        '<div class="code-output" id="output-' + codeId + '" style="display:none;"></div>' +
+                    '</div>'
+                );
+            }
+            const langLabel = lang ? '<span class="code-lang">' + lang + '</span>' : '';
+            if (langLabel) {
+                return (
+                    '<div class="code-block-wrapper">' +
+                        '<div class="code-block-header">' + langLabel + '</div>' +
+                        '<pre><code>' + escapedCode + '</code></pre>' +
+                    '</div>'
+                );
+            }
+            return '<pre><code>' + escapedCode + '</code></pre>';
         });
 
         // Luego manejamos el código en línea
@@ -2796,6 +2871,19 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Event listeners
+    if (chatMessages) {
+        chatMessages.addEventListener('click', function(event) {
+            const runBtn = event.target.closest('.run-code-btn');
+            if (runBtn) {
+                const codeId = runBtn.dataset.codeId;
+                if (codeId) {
+                    runBtn.disabled = true;
+                    executeCode(codeId).finally(() => { runBtn.disabled = false; });
+                }
+            }
+        });
+    }
+
     sendBtn.addEventListener('click', sendMessage);
     chatInput.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
