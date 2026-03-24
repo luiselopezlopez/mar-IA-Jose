@@ -3362,4 +3362,89 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Iniciar la aplicación (carga chats, modelos y archivos)
     initApp();
+
+    // ---- Mobile sidebar toggle ----
+    (function initMobileSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebar-overlay');
+        const toggleBtn = document.getElementById('mobile-sidebar-toggle');
+        const mobileThemeToggle = document.getElementById('mobile-theme-toggle');
+
+        if (!sidebar || !overlay || !toggleBtn) {
+            return;
+        }
+
+        function openSidebar() {
+            sidebar.classList.add('mobile-open');
+            overlay.classList.add('active');
+            overlay.setAttribute('aria-hidden', 'false');
+            toggleBtn.setAttribute('aria-expanded', 'true');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeSidebar() {
+            sidebar.classList.remove('mobile-open');
+            overlay.classList.remove('active');
+            overlay.setAttribute('aria-hidden', 'true');
+            toggleBtn.setAttribute('aria-expanded', 'false');
+            document.body.style.overflow = '';
+        }
+
+        toggleBtn.addEventListener('click', function () {
+            if (sidebar.classList.contains('mobile-open')) {
+                closeSidebar();
+            } else {
+                openSidebar();
+            }
+        });
+
+        overlay.addEventListener('click', closeSidebar);
+
+        // Close sidebar when a chat is selected on mobile
+        const chatListEl = document.querySelector('.chat-list');
+        if (chatListEl) {
+            chatListEl.addEventListener('click', function () {
+                if (window.innerWidth <= 767) {
+                    closeSidebar();
+                }
+            });
+        }
+
+        // Close sidebar when new chat button is pressed on mobile
+        const newChatBtnEl = document.getElementById('new-chat-btn');
+        if (newChatBtnEl) {
+            newChatBtnEl.addEventListener('click', function () {
+                if (window.innerWidth <= 767) {
+                    closeSidebar();
+                }
+            });
+        }
+
+        // Sync mobile theme toggle with desktop theme toggle
+        if (mobileThemeToggle) {
+            const desktopThemeToggle = document.getElementById('theme-toggle');
+
+            // Set initial state from localStorage
+            const isDark = localStorage.getItem('darkMode') === 'true';
+            mobileThemeToggle.textContent = isDark ? '☀️' : '🌙';
+
+            mobileThemeToggle.addEventListener('click', function () {
+                document.body.classList.toggle('dark-mode');
+                const nowDark = document.body.classList.contains('dark-mode');
+                localStorage.setItem('darkMode', nowDark);
+                mobileThemeToggle.textContent = nowDark ? '☀️' : '🌙';
+                if (desktopThemeToggle) {
+                    desktopThemeToggle.textContent = nowDark ? '☀️' : '🌙';
+                }
+            });
+
+            // Keep mobile toggle in sync if desktop toggle is clicked
+            if (desktopThemeToggle) {
+                desktopThemeToggle.addEventListener('click', function () {
+                    const nowDark = document.body.classList.contains('dark-mode');
+                    mobileThemeToggle.textContent = nowDark ? '☀️' : '🌙';
+                });
+            }
+        }
+    }());
 });
