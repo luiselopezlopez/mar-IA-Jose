@@ -1913,6 +1913,24 @@ Si la información no es suficiente para responder, utiliza tu conocimiento gene
     })
 
 
+@app.route('/api/execute_code', methods=['POST'])
+@login_required
+def execute_code_endpoint():
+    """Ejecuta código Python de forma segura en un subproceso aislado."""
+    from code_executor import execute_python_code  # noqa: PLC0415
+
+    data = request.get_json(silent=True) or {}
+    code = data.get('code', '')
+
+    if not isinstance(code, str) or not code.strip():
+        return jsonify({"error": "No se proporcionó código válido."}), 400
+
+    logger.info(f"Ejecutando código Python para usuario {get_user_id()}", "app.execute_code")
+
+    result = execute_python_code(code)
+    return jsonify(result)
+
+
 @app.route('/api/export_word', methods=['POST'])
 @login_required
 def export_word():
