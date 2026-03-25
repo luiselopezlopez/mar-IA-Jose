@@ -1553,7 +1553,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const code = codeEl.textContent;
+        const code = codeEl.innerHTML
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&');
         outputEl.style.display = 'block';
         outputEl.className = 'code-output code-output-loading';
         outputEl.textContent = 'Ejecutando…';
